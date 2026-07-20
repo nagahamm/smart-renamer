@@ -7,7 +7,15 @@ directories:
 ui:
   timeout_seconds: 5                      # ポップアップを自動で閉じて保存するまでの秒数
 
-# 3. LLM リネーム規則設定
+# 3. LLM
+llm:
+  model: "gemini-2.5-flash"
+  error_fallback_names:
+    - "Manual_Rename"
+    - "Screenshot_Error"
+    - "API_Failed"
+
+# 4. LLM リネーム規則設定
 llm_rules:
   prompt_template: >
     あなたは優秀なファイル名生成アシスタントです。

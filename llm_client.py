@@ -1,8 +1,18 @@
 import os
+import yaml
 import json
 from datetime import datetime
 from google import genai
 from google.genai import types
+
+
+# yamlファイルを読み込む処理を追加
+with open("config.yaml", "r", encoding="utf-8") as f:
+    config = yaml.safe_load(f)
+
+# yamlから設定を取得（値がない場合のデフォルト値も設定）
+MODEL_NAME = config.get("llm", {}).get("model", "gemini-2.5-flash")
+FALLBACK_NAMES = config.get("llm", {}).get("error_fallback_names", ["Manual_Rename", "Screenshot"])
 
 def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
     today_str = datetime.now().strftime("%Y-%m-%d")
@@ -38,7 +48,7 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
 
     try:
         response = client.models.generate_content(
-            model='gemini-1.5-flash',
+            model=MODEL_NAME,
             contents=f"【OCRテキスト】\n{ocr_text}",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -51,4 +61,6 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
         
     except Exception as e:
         print(f"Gemini APIエラー: {e}")
-        return [f"{today_str}__API_Error", "API_Error_1", "API_Error_2"]
+        # ▼ yamlで設定したリストに、今日の日付を組み合わせて返す
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        return [f"{today_str}__{name}" for name in FALLBACK_NAMES]
