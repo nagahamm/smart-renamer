@@ -23,6 +23,22 @@ class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self, watch_dir):
         self.watch_dir = watch_dir
 
+    # Macのスクショ特有の挙動（隠しファイルからのリネーム）を検知する
+    def on_moved(self, event):
+        filename = os.path.basename(event.dest_path)
+        if not event.is_directory and event.dest_path.lower().endswith('.png') and not filename.startswith('.'):
+            print(f"📸 新規スクリーンショットを検知: {event.dest_path}")
+            time.sleep(1.5)
+            file_queue.put(event.dest_path)
+
+    # 他のアプリから直接保存された場合のために、作成時の検知も残しておく
+    def on_created(self, event):
+        filename = os.path.basename(event.src_path)
+        if not event.is_directory and event.src_path.lower().endswith('.png') and not filename.startswith('.'):
+            print(f"📸 新規スクリーンショットを検知: {event.src_path}")
+            time.sleep(1.5)
+            file_queue.put(event.src_path)
+
     def on_created(self, event):
         filename = os.path.basename(event.src_path)
         if not event.is_directory and event.src_path.lower().endswith('.png') and not filename.startswith('.'):
