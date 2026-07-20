@@ -1,0 +1,14 @@
+# 環境変数ファイル（絶対にGitに上げない）
+.env
+
+# 仮想環境
+.venv/
+venv/
+env/
+
+# Pythonのキャッシュ
+__pycache__/
+*.pyc
+
+# macOSのシステムファイル
+.DS_Store
