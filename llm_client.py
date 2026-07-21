@@ -11,7 +11,7 @@ with open("config.yaml", "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 # yamlから設定を取得（値がない場合のデフォルト値も設定）
-MODEL_NAME = config.get("llm", {}).get("model", "gemini-2.5-flash")
+MODEL_NAME = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
 
 # Gemini APIを呼び出してファイル名の候補を取得する
 def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
