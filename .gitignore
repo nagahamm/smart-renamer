@@ -10,5 +10,7 @@ env/
 __pycache__/
 *.pyc
 
+app*.log
+
 # macOSのシステムファイル
 .DS_Store
