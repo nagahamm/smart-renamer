@@ -1,17 +1,17 @@
 import os
-# Tkの警告を非表示にする設定
+# Tkinterの非推奨警告（DeprecationWarning）を非表示にする設定
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
 
 import time
 import shutil
 import yaml
 import queue
-import re # 正規表現を使って数字を探すため
-import tkinter as tk
+import re
 from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from dotenv import load_dotenv
+
 # .envファイルから環境変数を読み込む
 load_dotenv()
 
@@ -20,8 +20,8 @@ from llm_client import get_filename_candidates
 from popup_ui import show_rename_dialog
 
 file_queue = queue.Queue()
-processed_files = set()  # 重複処理防止用
-                
+processed_files = set()  # 重複処理防止用のセット
+
 
 class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self, watch_dir):
@@ -29,28 +29,29 @@ class ScreenshotHandler(FileSystemEventHandler):
 
     def _enqueue(self, path):
         filename = os.path.basename(path)
-        # 隠しファイル除外 ＆ PNG画像のみ
+        # 隠しファイル除外 ＆ PNG画像のみ対象
         if not path.lower().endswith('.png') or filename.startswith('.'):
             return
         
-        # 即座にキューへ入れる（スレッドを止めない）
+        # 即座にキューへ入れる（イベントスレッドをブロックしない）
         if os.path.exists(path) and path not in processed_files:
-            print(f"📸 新規スクリーンショットを検知: {path}")
+            print(f"\n📸 新規スクリーンショットを検知: {path}")
             processed_files.add(path)
             file_queue.put(path)
 
-    # Macのスクショ特有の挙動（隠しファイルからのリネーム）を検知する
+    # macOSのスクショ特有の挙動（一時ファイルからのリネーム発生）を検知
     def on_moved(self, event):
         if not event.is_directory:
             self._enqueue(event.dest_path)
 
-    # 他のアプリから直接保存された場合のために、作成時の検知も残しておく
+    # 他アプリからの直接保存などを検知
     def on_created(self, event):
         if not event.is_directory:
             self._enqueue(event.src_path)
 
+
 def get_next_sequence_name(save_dir):
-    # 保存先フォルダを確認し、0001からの連番を含むファイル名を生成する
+    # """ LLMから候補が得られなかった場合のフォールバック（日付+連番）"""
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     if not os.path.exists(save_dir):
@@ -59,7 +60,7 @@ def get_next_sequence_name(save_dir):
     existing_files = os.listdir(save_dir)
     max_seq = 0
 
-    # 例: "2026-07-20__0001_Capture" のようなファイル名から数字部分(0001)を探す
+    # 例: "2026-07-21__0001_Capture" から末尾4桁の連番を抽出
     pattern = re.compile(rf"{today_str}__(\d{{4}})_Capture")
     
     for filename in existing_files:
@@ -69,12 +70,12 @@ def get_next_sequence_name(save_dir):
             if seq > max_seq:
                 max_seq = seq
                 
-    # 最大値に1を足して、4桁（0001など）にフォーマットする
     next_seq = max_seq + 1
     return f"{today_str}__{next_seq:04d}_Capture"
 
+
 def process_screenshot(filepath, config):
-    # ファイルが完全に書き込まれる＆存在することを確認（必要ならここで少し待つ）
+    # OSによるファイル書き込み完了を待つため1秒待機
     time.sleep(1.0)
     if not os.path.exists(filepath):
         print(f"⚠️ ファイルが存在しないためスキップします: {filepath}")
@@ -92,20 +93,20 @@ def process_screenshot(filepath, config):
     print("🧠 LLMへファイル名候補をリクエスト中...")
     candidates = get_filename_candidates(text, prompt_template)
 
-    # candidatesのチェックとログ強化
     if not candidates:
         final_name = get_next_sequence_name(save_dir)
         print(f"⚠️ 候補を取得できなかったため、自動連番で保存します: {final_name}")
     else:
         print(f"✨ 取得した候補: {candidates}")
-        # 正常時はUIを表示
         print("🖥️ UIを表示します...")
+        # 単一のTkウィンドウとしてダイアログを起動
         final_name = show_rename_dialog(candidates, timeout_seconds=timeout)
-
+        
     if final_name:
         new_filename = f"{final_name}.png"
         dest_path = os.path.join(save_dir, new_filename)
 
+        # 同名ファイルが存在する場合の重複回避 (_1, _2 ...)
         counter = 1
         while os.path.exists(dest_path):
             dest_path = os.path.join(save_dir, f"{final_name}_{counter}.png")
@@ -113,21 +114,12 @@ def process_screenshot(filepath, config):
 
         try:
             shutil.move(filepath, dest_path)
-            print(f"✅ 保存完了: {dest_path}")
+            print(f"✅ 保存完了: {dest_path}\n")
         except Exception as e:
             print(f"❌ ファイル移動エラー: {e}")
     else:
-        print("⚠️ キャンセルされました。ファイルは元の場所に残ります。")
+        print("⚠️ キャンセルされました。ファイルは元の場所に残ります。\n")
 
-# メインスレッドから定期的にキューを取り出して処理する関数
-def check_queue_loop(root, config):
-    try:
-        filepath = file_queue.get_nowait()
-        process_screenshot(filepath, config)
-    except queue.Empty:
-        pass
-    # 500ミリ秒ごとに再チェック
-    root.after(500, lambda: check_queue_loop(root, config))
 
 if __name__ == "__main__":
     try:
@@ -146,17 +138,17 @@ if __name__ == "__main__":
     print(f"👀 監視を開始しました: {watch_dir}")
     print("終了する場合は Ctrl+C を押してください。")
     
-    # メインのTkインスタンスを作成（背景ウィンドウは非表示）
-    root = tk.Tk()
-    root.withdraw()
-    
-    # 定期チェックループをキック
-    root.after(500, lambda: check_queue_loop(root, config))
-
+    # メインの軽量監視ループ（0.5秒おきにキューをチェック）
     try:
-        root.mainloop()  # TkinterのイベントループでGUIを描画維持
+        while True:
+            try:
+                filepath = file_queue.get_nowait()
+                process_screenshot(filepath, config)
+            except queue.Empty:
+                pass
+            time.sleep(0.5)
     except KeyboardInterrupt:
         observer.stop()
         print("\n監視を終了しました。")
-    
+
     observer.join()
