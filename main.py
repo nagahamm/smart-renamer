@@ -7,6 +7,7 @@ import shutil
 import yaml
 import queue
 import re # 正規表現を使って数字を探すため
+import tkinter as tk
 from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -118,6 +119,16 @@ def process_screenshot(filepath, config):
     else:
         print("⚠️ キャンセルされました。ファイルは元の場所に残ります。")
 
+# メインスレッドから定期的にキューを取り出して処理する関数
+def check_queue_loop(root, config):
+    try:
+        filepath = file_queue.get_nowait()
+        process_screenshot(filepath, config)
+    except queue.Empty:
+        pass
+    # 500ミリ秒ごとに再チェック
+    root.after(500, lambda: check_queue_loop(root, config))
+
 if __name__ == "__main__":
     try:
         with open("config.yaml", "r", encoding="utf-8") as f:
@@ -135,15 +146,15 @@ if __name__ == "__main__":
     print(f"👀 監視を開始しました: {watch_dir}")
     print("終了する場合は Ctrl+C を押してください。")
     
+    # メインのTkインスタンスを作成（背景ウィンドウは非表示）
+    root = tk.Tk()
+    root.withdraw()
+    
+    # 定期チェックループをキック
+    root.after(500, lambda: check_queue_loop(root, config))
+
     try:
-        while True:
-            try:
-                filepath = file_queue.get_nowait()
-                process_screenshot(filepath, config)
-            except queue.Empty:
-                pass
-            
-            time.sleep(1)
+        root.mainloop()  # TkinterのイベントループでGUIを描画維持
     except KeyboardInterrupt:
         observer.stop()
         print("\n監視を終了しました。")
