@@ -19,27 +19,35 @@ from llm_client import get_filename_candidates
 from popup_ui import show_rename_dialog
 
 file_queue = queue.Queue()
+processed_files = set()  # 重複処理防止用
                 
 
 class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self, watch_dir):
         self.watch_dir = watch_dir
 
+    def _enqueue(self, path):
+        filename = os.path.basename(path)
+        # 隠しファイル除外 ＆ PNG画像のみ
+        if not path.lower().endswith('.png') or filename.startswith('.'):
+            return
+        
+        # 1.5秒待ってファイルが完全に書き込まれるのを待つ
+        time.sleep(1.5)
+        if os.path.exists(path) and path not in processed_files:
+            print(f"📸 新規スクリーンショットを検知: {path}")
+            processed_files.add(path)
+            file_queue.put(path)
+
     # Macのスクショ特有の挙動（隠しファイルからのリネーム）を検知する
     def on_moved(self, event):
-        filename = os.path.basename(event.dest_path)
-        if not event.is_directory and event.dest_path.lower().endswith('.png') and not filename.startswith('.'):
-            print(f"📸 新規スクリーンショットを検知: {event.dest_path}")
-            time.sleep(1.5)
-            file_queue.put(event.dest_path)
+        if not event.is_directory:
+            self._enqueue(event.dest_path)
 
     # 他のアプリから直接保存された場合のために、作成時の検知も残しておく
     def on_created(self, event):
-        filename = os.path.basename(event.src_path)
-        if not event.is_directory and event.src_path.lower().endswith('.png') and not filename.startswith('.'):
-            print(f"📸 新規スクリーンショットを検知: {event.src_path}")
-            time.sleep(1.5)
-            file_queue.put(event.src_path)
+        if not event.is_directory:
+            self._enqueue(event.src_path)
 
 def get_next_sequence_name(save_dir):
     # 保存先フォルダを確認し、0001からの連番を含むファイル名を生成する
@@ -78,13 +86,14 @@ def process_screenshot(filepath, config):
     print("🧠 LLMへファイル名候補をリクエスト中...")
     candidates = get_filename_candidates(text, prompt_template)
 
-    if candidates is None:
-        # エラー時は自動連番を生成
+    # candidatesのチェックとログ強化
+    if not candidates:
         final_name = get_next_sequence_name(save_dir)
-        print(f"⚠️ APIエラーのため、自動連番で保存します: {final_name}")
+        print(f"⚠️ 候補を取得できなかったため、自動連番で保存します: {final_name}")
     else:
+        print(f"✨ 取得した候補: {candidates}")
         # 正常時はUIを表示
-        print("🖥️  UIを表示します...")
+        print("🖥️ UIを表示します...")
         final_name = show_rename_dialog(candidates, timeout_seconds=timeout)
 
     if final_name:
