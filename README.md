@@ -1,6 +1,18 @@
 # Screenshot Auto-Renamer
 
-Macで撮影したスクリーンショットを自動検知し、Google Gemini (1.5 Flash) のOCR機能とLLMを活用して、内容（領収書、財務データ、学習教材など）に合わせた最適なファイル名を提案・自動リネームするバックグラウンドツールです。
+Macで撮影したスクリーンショットをリアルタイムに自動検知し、Google Gemini (3.1 Flash Lite) のOCR機能とLLMを活用して、内容（領収書、財務データ、学習教材など）に合わせた最適なファイル名を提案・自動リネームするバックグラウンドツールです。
+
+PyQt6によるポップアップUIからキーボード（`↑`/`↓`/`Enter`）またはマウスで選択するだけで、指定したディレクトリへ自動でリネーム＆移動保存されます。
+
+
+## 🌟 主な特長
+
+- **リアルタイム監視**: macOS特有のスクショ生成挙動（一時ファイルからのリネーム発生）を `watchdog` で確実に検知。
+- **高精度な候補生成**: 画像内のテキストをOCR解析し、Gemini API（`gemini-3.1-flash-lite`）により文脈に沿った3つのファイル名候補を即座に提案。
+- **キーボードナビゲーション対応**: `↑` / `↓` キーで選択、`Enter` で決定、`Esc` でキャンセル。キーボードから手を離さずに1秒でリネームが完了。
+- **自動フォールバック**: API制限やタイムアウト発生時は、日付＋4桁連番（例: `2026-07-21__0001_Capture.png`）で自動保存。
+- **超軽量常駐 (launchd)**: macOS標準のバックグラウンド管理（`launchd`）に対応。待機時CPU/GPU消費 0.0%、メモリ約20〜30MBの省電力設計。
+
 
 ## 🚀 1. 仮想環境の作成と有効化
 
@@ -23,14 +35,17 @@ source .venv/bin/activate
 仮想環境を有効にした状態で、本ツールの動作に必要な外部ライブラリをインストールします。
 
 ```bash
-pip install watchdog google-genai pyyaml python-dotenv
+pip install watchdog google-genai pyyaml python-dotenv PyQt6
 ```
 
 **【インストールされる主なパッケージ】**
+
 - `watchdog`: デスクトップの新規スクリーンショット検知
 - `google-genai`: 新仕様のGemini APIクライアント
+- `PyQt6`: 高速かつ洗練されたGUIポップアップダイアログ
 - `pyyaml`: `config.yaml` の読み込み
 - `python-dotenv`: `.env` ファイルからのAPIキー読み込み
+
 
 ## 🔐 3. APIキーの設定 (Configuration)
 
@@ -70,3 +85,63 @@ python main.py
 4. **保存**: 最適な候補をクリック（またはタイムアウト）すると、`config.yaml` で指定したフォルダ（デフォルトは `~/Documents/Screenshots`）に自動でリネームされて移動します。
 
 ツールの実行を終了したい場合は、ターミナル上で `Ctrl + C` を押してください。
+
+## ⚙️ 5. macOS ログイン時自動常駐化 (launchd)
+
+手動起動せず、Mac起動時にバックグラウンドで完全自動実行させる設定です。
+
+### 5-1. launchd 用設定ファイル (.plist) の作成
+
+```bash
+cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "[http://www.apple.com/DTDs/PropertyList-1.0.dtd](http://www.apple.com/DTDs/PropertyList-1.0.dtd)">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.user.screenshot_renamer</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/osascript</string>
+        <string>-e</string>
+        <string>do shell script "cd /Users/cygnu/Documents/screenshot_renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>LimitLoadToSessionType</key>
+    <array>
+        <string>Aqua</string>
+    </array>
+</dict>
+</plist>
+PLIST_EOF
+```
+
+### 5-2. 権限設定と常駐登録
+```bash
+# フォルダ権限の許可
+chmod 755 ~/Library/LaunchAgents
+
+# ユーザーセッションへ登録・起動
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+```
+
+### 5-3. 管理用コマンド
+動作確認: `launchctl list | grep screenshot_renamer` または `ps aux | grep main.py`
+
+サービス停止: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist`
+
+再読み込み:
+
+```bash
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+```
+
+ログ確認: `cat app_error.log`
