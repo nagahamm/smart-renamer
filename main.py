@@ -32,8 +32,7 @@ class ScreenshotHandler(FileSystemEventHandler):
         if not path.lower().endswith('.png') or filename.startswith('.'):
             return
         
-        # 1.5秒待ってファイルが完全に書き込まれるのを待つ
-        time.sleep(1.5)
+        # 即座にキューへ入れる（スレッドを止めない）
         if os.path.exists(path) and path not in processed_files:
             print(f"📸 新規スクリーンショットを検知: {path}")
             processed_files.add(path)
@@ -74,6 +73,12 @@ def get_next_sequence_name(save_dir):
     return f"{today_str}__{next_seq:04d}_Capture"
 
 def process_screenshot(filepath, config):
+    # ファイルが完全に書き込まれる＆存在することを確認（必要ならここで少し待つ）
+    time.sleep(1.0)
+    if not os.path.exists(filepath):
+        print(f"⚠️ ファイルが存在しないためスキップします: {filepath}")
+        return
+
     save_dir = os.path.expanduser(config['directories']['save_dir'])
     timeout = config['ui']['timeout_seconds']
     prompt_template = config['llm_rules']['prompt_template']
