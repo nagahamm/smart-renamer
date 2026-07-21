@@ -1,15 +1,16 @@
-import warnings
-warnings.filterwarnings("ignore")
-
 import os
+# Tkの警告を非表示にする設定
+os.environ["TK_SILENCE_DEPRECATION"] = "1"
+
 import time
 import shutil
 import yaml
 import queue
+import re # 正規表現を使って数字を探すため
+from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from dotenv import load_dotenv
-
 # .envファイルから環境変数を読み込む
 load_dotenv()
 
@@ -18,6 +19,7 @@ from llm_client import get_filename_candidates
 from popup_ui import show_rename_dialog
 
 file_queue = queue.Queue()
+                
 
 class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self, watch_dir):
@@ -39,12 +41,29 @@ class ScreenshotHandler(FileSystemEventHandler):
             time.sleep(1.5)
             file_queue.put(event.src_path)
 
-    def on_created(self, event):
-        filename = os.path.basename(event.src_path)
-        if not event.is_directory and event.src_path.lower().endswith('.png') and not filename.startswith('.'):
-            print(f"📸 新規スクリーンショットを検知: {event.src_path}")
-            time.sleep(1.5)
-            file_queue.put(event.src_path)
+def get_next_sequence_name(save_dir):
+    # 保存先フォルダを確認し、0001からの連番を含むファイル名を生成する
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+        
+    existing_files = os.listdir(save_dir)
+    max_seq = 0
+
+    # 例: "2026-07-20__0001_Capture" のようなファイル名から数字部分(0001)を探す
+    pattern = re.compile(rf"{today_str}__(\d{{4}})_Capture")
+    
+    for filename in existing_files:
+        match = pattern.search(filename)
+        if match:
+            seq = int(match.group(1))
+            if seq > max_seq:
+                max_seq = seq
+                
+    # 最大値に1を足して、4桁（0001など）にフォーマットする
+    next_seq = max_seq + 1
+    return f"{today_str}__{next_seq:04d}_Capture"
 
 def process_screenshot(filepath, config):
     save_dir = os.path.expanduser(config['directories']['save_dir'])
@@ -59,8 +78,14 @@ def process_screenshot(filepath, config):
     print("🧠 LLMへファイル名候補をリクエスト中...")
     candidates = get_filename_candidates(text, prompt_template)
 
-    print("🖥️ UIを表示します...")
-    final_name = show_rename_dialog(candidates, timeout_seconds=timeout)
+    if candidates is None:
+        # エラー時は自動連番を生成
+        final_name = get_next_sequence_name(save_dir)
+        print(f"⚠️ APIエラーのため、自動連番で保存します: {final_name}")
+    else:
+        # 正常時はUIを表示
+        print("🖥️  UIを表示します...")
+        final_name = show_rename_dialog(candidates, timeout_seconds=timeout)
 
     if final_name:
         new_filename = f"{final_name}.png"

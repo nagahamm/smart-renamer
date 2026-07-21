@@ -12,8 +12,8 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 
 # yamlから設定を取得（値がない場合のデフォルト値も設定）
 MODEL_NAME = config.get("llm", {}).get("model", "gemini-2.5-flash")
-FALLBACK_NAMES = config.get("llm", {}).get("error_fallback_names", ["Manual_Rename", "Screenshot"])
 
+# Gemini APIを呼び出してファイル名の候補を取得する
 def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
     today_str = datetime.now().strftime("%Y-%m-%d")
     
@@ -22,12 +22,12 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
     
     if not api_key:
         print("エラー: APIキーが設定されていません。(.envファイルを確認してください)")
-        return [f"{today_str}__NoAPIKey", "Error_1", "Error_2"]
+        return None
 
     client = genai.Client(api_key=api_key)
     
     if not ocr_text.strip():
-        return [f"{today_str}__NoText_Screenshot", f"{today_str}__Screenshot", "Screenshot"]
+        return None
 
     system_instruction = f"""
     {prompt_template}
@@ -57,10 +57,9 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
             ),
         )
         data = json.loads(response.text)
-        return data.get("candidates", [f"{today_str}__ParseError", "Error_1", "Error_2"])
+        return data.get("candidates")
         
     except Exception as e:
         print(f"Gemini APIエラー: {e}")
-        # ▼ yamlで設定したリストに、今日の日付を組み合わせて返す
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        return [f"{today_str}__{name}" for name in FALLBACK_NAMES]
+        # エラーが起きたら None を返して main.py に知らせる
+        return None
