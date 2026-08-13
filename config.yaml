@@ -11,6 +11,8 @@ ui:
 llm:
   # 上限やコストを考慮して、高速・軽量な gemini-3.1-flash-lite を採用
   model: "gemini-3.1-flash-lite"
+  # APIリクエストが詰まってPythonが固まったままファイルを触れなくなるのを防ぐためのタイムアウト（秒）
+  timeout_seconds: 15
   error_fallback_names:
     - "Manual_Rename"
     - "Screenshot_Error"
