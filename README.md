@@ -12,6 +12,7 @@ PyQt6によるポップアップUIからキーボード（`↑`/`↓`/`Enter`）
 - **キーボードナビゲーション対応**: `↑` / `↓` キーで選択、`Enter` で決定、`Esc` でキャンセル。キーボードから手を離さずに1秒でリネームが完了。
 - **自動フォールバック**: API制限やタイムアウト発生時は、日付＋4桁連番（例: `2026-07-21__0001_Capture.png`）で自動保存。
 - **超軽量常駐 (launchd)**: macOS標準のバックグラウンド管理（`launchd`）に対応。待機時CPU/GPU消費 0.0%、メモリ約20〜30MBの省電力設計。
+- **アイドルタイムアウト**: 一定時間スクショが無ければ自動終了し、常駐プロセスを残さない（`config.yaml` の `ui.idle_timeout_minutes`、デフォルト30分）。次のスクショ撮影時に `launchd` の `WatchPaths` で自動復帰。
 
 
 ## 🚀 1. 仮想環境の作成と有効化
@@ -111,8 +112,18 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
     <key>RunAtLoad</key>
     <true/>
 
+    <!-- 異常終了時のみ再起動する。アイドルタイムアウトによる正常終了では再起動しない -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- 監視ディレクトリに変更があった時（＝スクショ撮影時）に launchd が再起動する -->
+    <key>WatchPaths</key>
+    <array>
+        <string>/Users/cygnu/Desktop</string>
+    </array>
 
     <key>LimitLoadToSessionType</key>
     <array>
@@ -122,6 +133,8 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
 </plist>
 PLIST_EOF
 ```
+
+※ `WatchPaths` のパスは `config.yaml` の `watch_dir` と一致させてください（`~` は展開されないため絶対パスで記述します）。
 
 ### 5-2. 権限設定と常駐登録
 ```bash

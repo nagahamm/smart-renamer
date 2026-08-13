@@ -6,6 +6,7 @@ directories:
 # 2. UI・挙動設定
 ui:
   timeout_seconds: 10                     # ポップアップを自動で閉じて保存するまでの秒数
+  idle_timeout_minutes: 30                # この時間スクショが無ければ常駐を終了（0で無効）
 
 # 3. LLM
 llm:

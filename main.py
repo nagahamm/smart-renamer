@@ -22,12 +22,15 @@ from popup_ui import show_rename_dialog
 file_queue = queue.Queue()
 processed_files = set()  # 重複処理防止用のセット
 
+# launchdのWatchPathsで起動された直後に拾う、既存ファイルの新しさの上限（秒）
+STARTUP_SCAN_MAX_AGE_SECONDS = 60
+
 
 class ScreenshotHandler(FileSystemEventHandler):
     def __init__(self, watch_dir):
         self.watch_dir = watch_dir
 
-    def _enqueue(self, path):
+    def enqueue(self, path):
         filename = os.path.basename(path)
         # 隠しファイル除外 ＆ PNG画像のみ対象
         if not path.lower().endswith('.png') or filename.startswith('.'):
@@ -42,12 +45,27 @@ class ScreenshotHandler(FileSystemEventHandler):
     # macOSのスクショ特有の挙動（一時ファイルからのリネーム発生）を検知
     def on_moved(self, event):
         if not event.is_directory:
-            self._enqueue(event.dest_path)
+            self.enqueue(event.dest_path)
 
     # 他アプリからの直接保存などを検知
     def on_created(self, event):
         if not event.is_directory:
-            self._enqueue(event.src_path)
+            self.enqueue(event.src_path)
+
+
+def enqueue_recent_files(handler, watch_dir):
+    """launchdのWatchPathsで起動された場合、起動のきっかけとなったスクショは
+    watchdogのイベントに乗らないため、起動直後に直接キューへ入れる。"""
+    if not os.path.isdir(watch_dir):
+        return
+
+    now = time.time()
+    for filename in os.listdir(watch_dir):
+        path = os.path.join(watch_dir, filename)
+        if not os.path.isfile(path):
+            continue
+        if now - os.path.getmtime(path) <= STARTUP_SCAN_MAX_AGE_SECONDS:
+            handler.enqueue(path)
 
 
 def get_next_sequence_name(save_dir):
@@ -130,25 +148,34 @@ if __name__ == "__main__":
         exit(1)
 
     watch_dir = os.path.expanduser(config['directories']['watch_dir'])
+    idle_timeout = config['ui'].get('idle_timeout_minutes', 0) * 60
+
     handler = ScreenshotHandler(watch_dir)
     observer = Observer()
     observer.schedule(handler, watch_dir, recursive=False)
     observer.start()
 
+    # 監視開始前に保存されたスクショを取りこぼさないよう、起動直後に一度スキャンする
+    enqueue_recent_files(handler, watch_dir)
+
     print(f"👀 監視を開始しました: {watch_dir}")
     print("終了する場合は Ctrl+C を押してください。")
-    
+
     # メインの軽量監視ループ（0.5秒おきにキューをチェック）
+    last_activity = time.time()
     try:
         while True:
             try:
                 filepath = file_queue.get_nowait()
                 process_screenshot(filepath, config)
+                last_activity = time.time()
             except queue.Empty:
-                pass
+                if idle_timeout > 0 and time.time() - last_activity > idle_timeout:
+                    print(f"💤 {idle_timeout // 60}分間スクショがなかったため終了します。")
+                    break
             time.sleep(0.5)
     except KeyboardInterrupt:
-        observer.stop()
         print("\n監視を終了しました。")
 
+    observer.stop()
     observer.join()
