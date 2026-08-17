@@ -12,6 +12,8 @@ with open("config.yaml", "r", encoding="utf-8") as f:
 
 # yamlから設定を取得（値がない場合のデフォルト値も設定）
 MODEL_NAME = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
+# APIが詰まって無期限にブロックし続けるのを防ぐためのタイムアウト（秒）
+TIMEOUT_SECONDS = config.get("llm", {}).get("timeout_seconds", 15)
 
 # Gemini APIを呼び出してファイル名の候補を取得する
 def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
@@ -54,6 +56,9 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
                 system_instruction=system_instruction,
                 response_mime_type="application/json",
                 temperature=0.2,
+                # ネットワーク不調時に無期限でブロックし、ファイルがリネーム待ちのまま
+                # 固まってしまうのを防ぐためのタイムアウト設定
+                http_options=types.HttpOptions(timeout=TIMEOUT_SECONDS * 1000),
             ),
         )
         data = json.loads(response.text)
