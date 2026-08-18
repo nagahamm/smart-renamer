@@ -36,7 +36,7 @@ source .venv/bin/activate
 仮想環境を有効にした状態で、本ツールの動作に必要な外部ライブラリをインストールします。
 
 ```bash
-pip install watchdog google-genai pyyaml python-dotenv PyQt6
+pip install watchdog google-genai pyyaml python-dotenv PyQt6 pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-Vision
 ```
 
 **【インストールされる主なパッケージ】**
@@ -46,6 +46,7 @@ pip install watchdog google-genai pyyaml python-dotenv PyQt6
 - `PyQt6`: 高速かつ洗練されたGUIポップアップダイアログ
 - `pyyaml`: `config.yaml` の読み込み
 - `python-dotenv`: `.env` ファイルからのAPIキー読み込み
+- `pyobjc-framework-*`: Vision framework によるOCR（Cocoa / Quartz / Vision）
 
 
 ## 🔐 3. APIキーの設定 (Configuration)
