@@ -1,3 +1,4 @@
+import os
 import sys
 from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 from PyQt6.QtWidgets import (
@@ -5,12 +6,61 @@ from PyQt6.QtWidgets import (
     QHBoxLayout, QFrame
 )
 from PyQt6.QtCore import QSize, QTimer, Qt
-from PyQt6.QtGui import QFont, QFontMetrics
+from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
 
 # ダイアログの初期サイズ。画面が小さい場合は SCREEN_RATIO まで縮める
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 760
 SCREEN_RATIO = 0.9
+
+
+class PreviewPane(QLabel):
+    """対象ファイルの中身を表示する。枠のサイズは変えず、中身をアスペクト比維持で収める。"""
+
+    def __init__(self, filepath):
+        super().__init__()
+        self.filepath = filepath
+        self.source = self._load(filepath)
+
+        self.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.setMinimumHeight(160)
+        self.setStyleSheet(
+            "background-color: #000000; border: 1px solid #3A3A3C; border-radius: 6px;"
+        )
+
+        if self.source is None:
+            # プレビューが出せなくてもリネーム操作は続行できるようにする
+            self.setFont(QFont("SF Pro Text", 11))
+            name = os.path.basename(filepath) if filepath else ""
+            self.setText("\n".join(filter(None, ["プレビューを表示できません", name])))
+
+    def _load(self, filepath):
+        if not filepath or not os.path.exists(filepath):
+            return None
+        pixmap = QPixmap(filepath)
+        return None if pixmap.isNull() else pixmap
+
+    def _rescale(self):
+        if self.source is None:
+            return
+
+        # Retinaでぼやけないよう実ピクセルで拡縮し、描画時の倍率を戻す
+        ratio = self.devicePixelRatioF()
+        target = QSize(
+            max(int(self.width() * ratio), 1),
+            max(int(self.height() * ratio), 1),
+        )
+        scaled = self.source.scaled(
+            target,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        scaled.setDevicePixelRatio(ratio)
+        self.setPixmap(scaled)
+
+    def resizeEvent(self, event):
+        self._rescale()
+        super().resizeEvent(event)
 
 
 class CandidateCard(QFrame):
@@ -54,9 +104,10 @@ class CandidateCard(QFrame):
 
 
 class RenameDialog(QDialog):
-    def __init__(self, candidates, timeout_seconds=10):
+    def __init__(self, candidates, filepath=None, timeout_seconds=10):
         super().__init__()
         self.candidates = candidates
+        self.filepath = filepath
         self.time_left = timeout_seconds
         self.selected_name = None
         self.cards = []
@@ -95,13 +146,16 @@ class RenameDialog(QDialog):
         self.timer_label.setStyleSheet("color: #0A84FF;")
         layout.addWidget(self.timer_label)
 
+        # --- プレビュー ---
+        # 余った領域は全てプレビューに割り当てる。ウィンドウを広げた分だけ大きく見える
+        self.preview = PreviewPane(self.filepath)
+        layout.addWidget(self.preview, stretch=1)
+
         # --- 候補リスト ---
         for cand in self.candidates:
             card = CandidateCard(cand, self)
             layout.addWidget(card)
             self.cards.append(card)
-
-        layout.addStretch()
 
         # --- フッター ---
         footer_layout = QHBoxLayout()
@@ -179,7 +233,7 @@ class RenameDialog(QDialog):
         self.accept()
 
 
-def show_rename_dialog(candidates, timeout_seconds=10):
+def show_rename_dialog(candidates, filepath=None, timeout_seconds=10):
     app = QApplication.instance() or QApplication(sys.argv)
 
     # QApplicationを生成するとプロセスが通常のGUIアプリ扱いになり、Dockアイコンと
@@ -188,7 +242,7 @@ def show_rename_dialog(candidates, timeout_seconds=10):
     ns_app = NSApplication.sharedApplication()
     ns_app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
 
-    dialog = RenameDialog(candidates, timeout_seconds)
+    dialog = RenameDialog(candidates, filepath, timeout_seconds)
     # Accessoryではウィンドウが自動で前面に来ないため、明示的にフォーカスを取る
     dialog.show()
     dialog.raise_()
