@@ -1,4 +1,5 @@
 import os
+import signal
 import sys
 from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 from PyQt6.QtWidgets import (
@@ -247,14 +248,60 @@ class RenameDialog(QDialog):
         self.accept()
 
 
-def show_rename_dialog(candidates, filepath=None, timeout_seconds=10):
+# QApplicationをローカル変数だけで持つと関数を抜けた時点で破棄される。
+# NSApplication側はGUIアプリとして登録されたまま残るため、イベントを捌く主体が
+# 居ない状態になり、レインボーカーソルの原因になる。プロセス全体で保持する。
+_app = None
+
+
+def _ensure_app():
+    """QApplicationを取得（無ければ生成）し、常駐ツールとしての体裁を整える。"""
+    global _app
     app = QApplication.instance() or QApplication(sys.argv)
+    _app = app
 
     # QApplicationを生成するとプロセスが通常のGUIアプリ扱いになり、Dockアイコンと
     # メニューバーを占有したまま常駐してしまう。メニューバー常駐アプリと同じ
     # Accessory に変更し、Dockに居座らせない。
+    NSApplication.sharedApplication().setActivationPolicy_(
+        NSApplicationActivationPolicyAccessory
+    )
+
+    # これが無いと、リネームのダイアログを閉じた時点で「最後のウィンドウが閉じた」と
+    # 判断され、常駐プロセスごと終了してしまう。
+    app.setQuitOnLastWindowClosed(False)
+    return app
+
+
+def run_event_loop(on_tick, interval_ms=500):
+    """Cocoaのイベントを処理し続けるメインループ。
+
+    自前の while ループで待機すると、GUIアプリとして登録されているのにイベント
+    キューを処理しないプロセスになり、macOSから応答なしと判断されてレインボー
+    カーソルの原因になる。待機中もイベントループを回し続ける必要がある。
+    """
+    app = _ensure_app()
+
+    # Qtのイベントループ実行中はPythonのシグナルハンドラが動かないが、
+    # 定期的に発火するタイマーでPython側へ制御が戻るため Ctrl+C が効く
+    signal.signal(signal.SIGINT, lambda *_: app.quit())
+
+    timer = QTimer()
+    timer.timeout.connect(on_tick)
+    timer.start(interval_ms)
+
+    app.exec()
+
+
+def stop_event_loop():
+    app = QApplication.instance()
+    if app:
+        app.quit()
+
+
+def show_rename_dialog(candidates, filepath=None, timeout_seconds=10):
+    app = _ensure_app()
     ns_app = NSApplication.sharedApplication()
-    ns_app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
 
     dialog = RenameDialog(candidates, filepath, timeout_seconds)
     # Accessoryではウィンドウが自動で前面に来ないため、明示的にフォーカスを取る
