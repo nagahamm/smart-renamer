@@ -1,6 +1,7 @@
 import sys
+from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QLabel, 
+    QApplication, QDialog, QVBoxLayout, QLabel,
     QHBoxLayout, QFrame
 )
 from PyQt6.QtCore import QTimer, Qt
@@ -152,6 +153,21 @@ class RenameDialog(QDialog):
 
 def show_rename_dialog(candidates, timeout_seconds=10):
     app = QApplication.instance() or QApplication(sys.argv)
+
+    # QApplicationを生成するとプロセスが通常のGUIアプリ扱いになり、Dockアイコンと
+    # メニューバーを占有したまま常駐してしまう。メニューバー常駐アプリと同じ
+    # Accessory に変更し、Dockに居座らせない。
+    ns_app = NSApplication.sharedApplication()
+    ns_app.setActivationPolicy_(NSApplicationActivationPolicyAccessory)
+
     dialog = RenameDialog(candidates, timeout_seconds)
+    # Accessoryではウィンドウが自動で前面に来ないため、明示的にフォーカスを取る
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
     dialog.exec()
+
+    # 閉じた後は前面から退き、フォーカスを元のアプリへ返す
+    ns_app.deactivate()
+
     return dialog.selected_name
