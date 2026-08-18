@@ -4,16 +4,22 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel,
     QHBoxLayout, QFrame
 )
-from PyQt6.QtCore import QTimer, Qt
+from PyQt6.QtCore import QSize, QTimer, Qt
 from PyQt6.QtGui import QFont, QFontMetrics
+
+# ダイアログの初期サイズ。画面が小さい場合は SCREEN_RATIO まで縮める
+DEFAULT_WIDTH = 1280
+DEFAULT_HEIGHT = 760
+SCREEN_RATIO = 0.9
+
 
 class CandidateCard(QFrame):
     """テキストが100%垂直中央に揃うカード型選択肢"""
-    def __init__(self, text, cand, parent_dialog):
+    def __init__(self, cand, parent_dialog):
         super().__init__()
         self.cand = cand
         self.parent_dialog = parent_dialog
-        
+
         self.setFixedHeight(46)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -21,11 +27,26 @@ class CandidateCard(QFrame):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
 
-        self.label = QLabel(f" {text}")
+        self.label = QLabel()
         self.label.setFont(QFont("SF Mono", 10))
         # 確実に左寄せ＆垂直中央揃え
         self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         layout.addWidget(self.label)
+
+        self._update_elided_text()
+
+    def _update_elided_text(self):
+        """幅に合わせて省略位置を計算し直す。ウィンドウを広げれば全体が見える。"""
+        metrics = QFontMetrics(self.label.font())
+        available = max(self.width() - 40, 0)
+        text = f" {metrics.elidedText(self.cand, Qt.TextElideMode.ElideLeft, available)}"
+        # 同じ文字列を再設定するとレイアウトが再帰的に走るため、変化時のみ更新する
+        if text != self.label.text():
+            self.label.setText(text)
+
+    def resizeEvent(self, event):
+        self._update_elided_text()
+        super().resizeEvent(event)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -43,11 +64,22 @@ class RenameDialog(QDialog):
 
         self.init_ui()
 
+    def _initial_size(self):
+        """初期サイズ。画面をはみ出さないよう上限を設ける。"""
+        width, height = DEFAULT_WIDTH, DEFAULT_HEIGHT
+        screen = QApplication.primaryScreen()
+        if screen:
+            available = screen.availableGeometry()
+            width = min(width, int(available.width() * SCREEN_RATIO))
+            height = min(height, int(available.height() * SCREEN_RATIO))
+        return QSize(width, height)
+
     def init_ui(self):
         self.setWindowTitle("Screenshot Renamer")
-        self.setFixedSize(620, 310)
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF;")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        self.setSizeGripEnabled(True)
+        self.resize(self._initial_size())
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 18, 20, 16)
@@ -64,12 +96,8 @@ class RenameDialog(QDialog):
         layout.addWidget(self.timer_label)
 
         # --- 候補リスト ---
-        btn_font = QFont("SF Mono", 10)
-        font_metrics = QFontMetrics(btn_font)
-
         for cand in self.candidates:
-            display_text = font_metrics.elidedText(cand, Qt.TextElideMode.ElideLeft, 540)
-            card = CandidateCard(display_text, cand, self)
+            card = CandidateCard(cand, self)
             layout.addWidget(card)
             self.cards.append(card)
 
