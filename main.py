@@ -121,22 +121,30 @@ def process_screenshot(filepath, config):
         final_name = show_rename_dialog(candidates, filepath, timeout_seconds=timeout)
         
     if final_name:
-        new_filename = f"{final_name}.png"
-        dest_path = os.path.join(save_dir, new_filename)
-
-        # 同名ファイルが存在する場合の重複回避 (_1, _2 ...)
-        counter = 1
-        while os.path.exists(dest_path):
-            dest_path = os.path.join(save_dir, f"{final_name}_{counter}.png")
-            counter += 1
-
-        try:
-            shutil.move(filepath, dest_path)
-            print(f"✅ 保存完了: {dest_path}\n")
-        except Exception as e:
-            print(f"❌ ファイル移動エラー: {e}")
+        apply_rename(filepath, final_name, save_dir)
     else:
         print("⚠️ キャンセルされました。ファイルは元の場所に残ります。\n")
+
+
+def apply_rename(filepath, final_name, dest_dir):
+    """元の拡張子を保ったままリネームして dest_dir へ移す。"""
+    # 拡張子を決め打ちすると、PNG以外を渡したときに壊れたファイル名になる
+    extension = os.path.splitext(filepath)[1]
+    dest_path = os.path.join(dest_dir, f"{final_name}{extension}")
+
+    # 同名ファイルが存在する場合の重複回避 (_1, _2 ...)
+    counter = 1
+    while os.path.exists(dest_path):
+        dest_path = os.path.join(dest_dir, f"{final_name}_{counter}{extension}")
+        counter += 1
+
+    try:
+        shutil.move(filepath, dest_path)
+        print(f"✅ 保存完了: {dest_path}\n")
+        return dest_path
+    except Exception as e:
+        print(f"❌ ファイル移動エラー: {e}")
+        return None
 
 
 if __name__ == "__main__":
