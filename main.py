@@ -2,6 +2,7 @@ import os
 # Tkinterの非推奨警告（DeprecationWarning）を非表示にする設定
 os.environ["TK_SILENCE_DEPRECATION"] = "1"
 
+import argparse
 import time
 import shutil
 import yaml
@@ -15,7 +16,7 @@ from dotenv import load_dotenv
 # .envファイルから環境変数を読み込む
 load_dotenv()
 
-from ocr_engine import extract_text
+from ocr_engine import extract_text, is_supported
 from llm_client import get_filename_candidates
 from popup_ui import run_event_loop, show_rename_dialog, stop_event_loop
 
@@ -106,6 +107,80 @@ def get_next_sequence_name(save_dir):
     return f"{today_str}__{next_seq:04d}_Capture"
 
 
+def collect_targets(paths):
+    """CLIで渡されたパスを、リネーム対象のファイル一覧に展開する。
+
+    フォルダは直下のみを見る。再帰すると意図せず大量のファイルを拾い、
+    そのぶんAPIを呼んでしまうため。
+    """
+    targets = []
+    for path in paths:
+        if os.path.isdir(path):
+            entries = sorted(os.listdir(path))
+            candidates = [os.path.join(path, name) for name in entries]
+        else:
+            candidates = [path]
+
+        for candidate in candidates:
+            filename = os.path.basename(candidate)
+            if filename.startswith('.') or not os.path.isfile(candidate):
+                continue
+            if is_supported(candidate) and candidate not in targets:
+                targets.append(candidate)
+
+    return targets
+
+
+def rename_manually(paths, config):
+    """選ばれたファイルをその場でリネームする（移動しない）。"""
+    targets = collect_targets(paths)
+    if not targets:
+        print("対象になるファイルがありません（対応形式: png / jpg / jpeg / heic / pdf）")
+        return
+
+    prompt_template = config['llm_rules']['prompt_template']
+    total = len(targets)
+    print(f"🗂 {total}件のファイルをリネームします")
+
+    for index, filepath in enumerate(targets, start=1):
+        print(f"\n[{index}/{total}] {filepath}")
+        candidates = build_candidates(filepath, prompt_template)
+
+        if not candidates:
+            # 手動モードでは連番より、元の名前を出して直してもらう方が親切
+            candidates = [os.path.splitext(os.path.basename(filepath))[0]]
+            print("⚠️ 候補を取得できませんでした。元のファイル名を表示します。")
+        else:
+            print(f"✨ 取得した候補: {candidates}")
+
+        final_name, aborted = show_rename_dialog(
+            candidates,
+            filepath,
+            timeout_seconds=None,      # 自分で決める必要があるためタイムアウトしない
+            progress=(index, total),
+            foreground=True,           # 自分で起動しているので前面に出す
+        )
+
+        if aborted:
+            print("⏹ 残りを中止しました。")
+            return
+
+        if final_name:
+            # 移動はせず、元のフォルダの中で名前だけ変える
+            apply_rename(filepath, final_name, os.path.dirname(filepath))
+        else:
+            print("↩︎ スキップしました。")
+
+
+def build_candidates(filepath, prompt_template):
+    """OCR/テキスト抽出からファイル名候補までをまとめる。監視・手動の共通処理。"""
+    print("🔍 テキストを抽出中...")
+    text = extract_text(filepath)
+
+    print("🧠 LLMへファイル名候補をリクエスト中...")
+    return get_filename_candidates(text, prompt_template)
+
+
 def process_screenshot(filepath, config):
     # OSによるファイル書き込み完了を待つため1秒待機
     time.sleep(1.0)
@@ -116,14 +191,10 @@ def process_screenshot(filepath, config):
     save_dir = os.path.expanduser(config['directories']['save_dir'])
     timeout = config['ui']['timeout_seconds']
     prompt_template = config['llm_rules']['prompt_template']
-    
+
     os.makedirs(save_dir, exist_ok=True)
 
-    print("🔍 OCR処理を実行中...")
-    text = extract_text(filepath)
-
-    print("🧠 LLMへファイル名候補をリクエスト中...")
-    candidates = get_filename_candidates(text, prompt_template)
+    candidates = build_candidates(filepath, prompt_template)
 
     if not candidates:
         final_name = get_next_sequence_name(save_dir)
@@ -161,13 +232,33 @@ def apply_rename(filepath, final_name, dest_dir):
         return None
 
 
-if __name__ == "__main__":
+def load_config():
+    # 実行ディレクトリに依存せず、スクリプトと同じ場所の設定を読む
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
     try:
-        with open("config.yaml", "r", encoding="utf-8") as f:
-            config = yaml.safe_load(f)
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
     except FileNotFoundError:
-        print("エラー: config.yaml が見つかりません。")
+        print(f"エラー: config.yaml が見つかりません。({config_path})")
         exit(1)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="スクリーンショットのリネームツール")
+    parser.add_argument(
+        "--rename",
+        nargs="+",
+        metavar="PATH",
+        help="指定したファイル（またはフォルダ直下のファイル）をその場でリネームする",
+    )
+    args = parser.parse_args()
+
+    config = load_config()
+
+    # 手動モード: 常駐せず、渡されたファイルを処理して終了する
+    if args.rename:
+        rename_manually(args.rename, config)
+        exit(0)
 
     watch_dir = os.path.expanduser(config['directories']['watch_dir'])
     idle_timeout = config['ui'].get('idle_timeout_minutes', 0) * 60
