@@ -132,7 +132,7 @@ def process_screenshot(filepath, config):
         print(f"✨ 取得した候補: {candidates}")
         print("🖥️ UIを表示します...")
         # 単一のTkウィンドウとしてダイアログを起動
-        final_name = show_rename_dialog(candidates, filepath, timeout_seconds=timeout)
+        final_name, _ = show_rename_dialog(candidates, filepath, timeout_seconds=timeout)
         
     if final_name:
         apply_rename(filepath, final_name, save_dir)

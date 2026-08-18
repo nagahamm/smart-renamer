@@ -1,10 +1,14 @@
 import os
 import signal
 import sys
-from AppKit import NSApplication, NSApplicationActivationPolicyAccessory
+from AppKit import (
+    NSApplication,
+    NSApplicationActivationPolicyAccessory,
+    NSApplicationActivationPolicyRegular,
+)
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel,
-    QHBoxLayout, QFrame
+    QHBoxLayout, QFrame, QLineEdit
 )
 from PyQt6.QtCore import QSettings, QSize, QTimer, Qt
 from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
@@ -17,6 +21,18 @@ SCREEN_RATIO = 0.9
 # ウィンドウサイズの保存先。利用者が編集する設定ではないため config.yaml には置かない
 SETTINGS_ORG = "screenshot_renamer"
 SETTINGS_APP = "RenameDialog"
+
+
+def sanitize_filename(name):
+    """入力された名前をファイル名として使える形に整える。使えなければ None。"""
+    if not name:
+        return None
+
+    # "/" はパス区切りとして解釈されるため使えない
+    cleaned = name.strip().replace("/", "_").replace("\0", "")
+    # 先頭がドットだと不可視ファイルになってしまう
+    cleaned = cleaned.lstrip(".").strip()
+    return cleaned or None
 
 
 class PreviewPane(QLabel):
@@ -109,12 +125,15 @@ class CandidateCard(QFrame):
 
 
 class RenameDialog(QDialog):
-    def __init__(self, candidates, filepath=None, timeout_seconds=10):
+    def __init__(self, candidates, filepath=None, timeout_seconds=10, progress=None):
         super().__init__()
         self.candidates = candidates
         self.filepath = filepath
+        # timeout_seconds が None のときはタイマーを動かさない（手動モード）
         self.time_left = timeout_seconds
+        self.progress = progress
         self.selected_name = None
+        self.aborted = False
         self.cards = []
         self.current_index = 0
         self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
@@ -152,13 +171,32 @@ class RenameDialog(QDialog):
         layout.setSpacing(10)
 
         # --- ヘッダー ---
+        header_layout = QHBoxLayout()
+
         title_label = QLabel("ファイル名を選択")
         title_label.setFont(QFont("SF Pro Text", 13, QFont.Weight.Bold))
-        layout.addWidget(title_label)
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
 
-        self.timer_label = QLabel(f"選択されない場合、{self.time_left}秒後に第1候補で自動保存します")
+        if self.progress:
+            # 複数ファイルを順に処理しているときの「3 / 50」表示
+            done, total = self.progress
+            progress_label = QLabel(f"{done} / {total}")
+            progress_label.setFont(QFont("SF Pro Text", 11))
+            progress_label.setStyleSheet("color: #8E8E93;")
+            header_layout.addWidget(progress_label)
+
+        layout.addLayout(header_layout)
+
+        self.timer_label = QLabel()
         self.timer_label.setFont(QFont("SF Pro Text", 10))
         self.timer_label.setStyleSheet("color: #0A84FF;")
+        if self._has_timeout():
+            self.timer_label.setText(
+                f"選択されない場合、{self.time_left}秒後に第1候補で自動保存します"
+            )
+        else:
+            self.timer_label.setText("名前を選ぶか、直接書き換えて Enter で確定します")
         layout.addWidget(self.timer_label)
 
         # --- プレビュー ---
@@ -172,11 +210,39 @@ class RenameDialog(QDialog):
             layout.addWidget(card)
             self.cards.append(card)
 
+        # --- 編集欄 ---
+        # 候補を選ぶとここに入る。そのまま書き換えて確定できる
+        self.name_edit = QLineEdit()
+        self.name_edit.setFont(QFont("SF Mono", 11))
+        self.name_edit.setFixedHeight(38)
+        self.name_edit.setStyleSheet("""
+            QLineEdit {
+                background-color: #2C2C2E;
+                border: 1px solid #3A3A3C;
+                border-radius: 6px;
+                padding: 0 10px;
+                color: #FFFFFF;
+            }
+            QLineEdit:focus { border: 2px solid #0A84FF; }
+        """)
+        self.name_edit.returnPressed.connect(self.confirm_edited_name)
+        if self.candidates:
+            self.name_edit.setText(self.candidates[0])
+        layout.addWidget(self.name_edit)
+
         # --- フッター ---
         footer_layout = QHBoxLayout()
         footer_layout.addStretch()
 
-        cancel_btn = QLabel("キャンセル（保存しない）")
+        if self.progress:
+            abort_btn = QLabel("すべて中止")
+            abort_btn.setFont(QFont("SF Pro Text", 10))
+            abort_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            abort_btn.setStyleSheet("color: #FF9F0A; margin-right: 16px;")
+            abort_btn.mousePressEvent = lambda e: self.on_abort()
+            footer_layout.addWidget(abort_btn)
+
+        cancel_btn = QLabel("スキップ（変更しない）" if self.progress else "キャンセル（保存しない）")
         cancel_btn.setFont(QFont("SF Pro Text", 10))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         cancel_btn.setStyleSheet("color: #FF453A;")
@@ -186,14 +252,18 @@ class RenameDialog(QDialog):
         layout.addLayout(footer_layout)
 
         # 初期表示・フォーカス設定
+        # 矢印キーは dialog 側で拾うため、フォーカスは常に編集欄に置く
         self.update_card_styles()
-        if self.cards:
-            self.cards[0].setFocus()
+        self.name_edit.setFocus()
 
         # タイマー
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_timer)
-        self.timer.start(1000)
+        if self._has_timeout():
+            self.timer.start(1000)
+
+    def _has_timeout(self):
+        return bool(self.time_left)
 
     def update_card_styles(self):
         """選択状態に合わせてカードとラベルのスタイルを一括変更"""
@@ -215,25 +285,30 @@ class RenameDialog(QDialog):
             """)
             card.label.setStyleSheet(f"color: {text_color}; border: none; background: transparent;")
 
+    def select_candidate(self, index):
+        """候補を選び、編集欄の中身を差し替える。"""
+        if not (0 <= index < len(self.candidates)):
+            return
+        self.current_index = index
+        self.update_card_styles()
+        self.name_edit.setText(self.candidates[index])
+        self.name_edit.setFocus()
+
     def keyPressEvent(self, event):
         key = event.key()
 
         if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
             delta = 1 if key == Qt.Key.Key_Down else -1
-            new_idx = self.current_index + delta
-            if 0 <= new_idx < len(self.cards):
-                self.current_index = new_idx
-                self.update_card_styles()
-                self.cards[self.current_index].setFocus()
-
-        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
-            if 0 <= self.current_index < len(self.candidates):
-                self.on_select(self.candidates[self.current_index])
+            self.select_candidate(self.current_index + delta)
 
         elif key == Qt.Key.Key_Escape:
             self.on_select(None)
         else:
             super().keyPressEvent(event)
+
+    def confirm_edited_name(self):
+        """編集欄の内容で確定する。"""
+        self.on_select(self.name_edit.text())
 
     def update_timer(self):
         self.time_left -= 1
@@ -244,8 +319,16 @@ class RenameDialog(QDialog):
 
     def on_select(self, name):
         self.timer.stop()
-        self.selected_name = name
+        # 候補クリック・キー確定・タイムアウトのどの経路でも同じ整形を通す
+        self.selected_name = sanitize_filename(name)
         self.accept()
+
+    def on_abort(self):
+        """複数処理中に残り全てを中止する。"""
+        self.timer.stop()
+        self.aborted = True
+        self.selected_name = None
+        self.reject()
 
 
 # QApplicationをローカル変数だけで持つと関数を抜けた時点で破棄される。
@@ -254,18 +337,25 @@ class RenameDialog(QDialog):
 _app = None
 
 
-def _ensure_app():
-    """QApplicationを取得（無ければ生成）し、常駐ツールとしての体裁を整える。"""
+def _ensure_app(foreground=False):
+    """QApplicationを取得（無ければ生成）し、常駐ツールとしての体裁を整える。
+
+    foreground=True は手動モード用。利用者が自分で起動しているため、
+    通常のアプリとして前面に出るのが正しい。
+    """
     global _app
     app = QApplication.instance() or QApplication(sys.argv)
     _app = app
 
-    # QApplicationを生成するとプロセスが通常のGUIアプリ扱いになり、Dockアイコンと
-    # メニューバーを占有したまま常駐してしまう。メニューバー常駐アプリと同じ
-    # Accessory に変更し、Dockに居座らせない。
-    NSApplication.sharedApplication().setActivationPolicy_(
-        NSApplicationActivationPolicyAccessory
+    # 監視モードでは、QApplicationを生成するとプロセスが通常のGUIアプリ扱いになり、
+    # Dockアイコンとメニューバーを占有したまま常駐してしまう。メニューバー常駐アプリと
+    # 同じ Accessory に変更し、Dockに居座らせない。
+    policy = (
+        NSApplicationActivationPolicyRegular
+        if foreground
+        else NSApplicationActivationPolicyAccessory
     )
+    NSApplication.sharedApplication().setActivationPolicy_(policy)
 
     # これが無いと、リネームのダイアログを閉じた時点で「最後のウィンドウが閉じた」と
     # 判断され、常駐プロセスごと終了してしまう。
@@ -299,11 +389,16 @@ def stop_event_loop():
         app.quit()
 
 
-def show_rename_dialog(candidates, filepath=None, timeout_seconds=10):
-    app = _ensure_app()
+def show_rename_dialog(candidates, filepath=None, timeout_seconds=10, progress=None,
+                       foreground=False):
+    """リネーム候補を提示する。戻り値は (確定した名前, 全体中止されたか)。
+
+    timeout_seconds に None を渡すとタイムアウトしない（手動モード）。
+    """
+    app = _ensure_app(foreground=foreground)
     ns_app = NSApplication.sharedApplication()
 
-    dialog = RenameDialog(candidates, filepath, timeout_seconds)
+    dialog = RenameDialog(candidates, filepath, timeout_seconds, progress)
     # Accessoryではウィンドウが自動で前面に来ないため、明示的にフォーカスを取る
     dialog.show()
     dialog.raise_()
@@ -313,4 +408,4 @@ def show_rename_dialog(candidates, filepath=None, timeout_seconds=10):
     # 閉じた後は前面から退き、フォーカスを元のアプリへ返す
     ns_app.deactivate()
 
-    return dialog.selected_name
+    return dialog.selected_name, dialog.aborted
