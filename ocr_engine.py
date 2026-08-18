@@ -1,5 +1,6 @@
 import os
 import objc
+import AppKit
 import Foundation
 import Vision
 import Quartz
@@ -69,6 +70,44 @@ def _first_pdf_page(filepath: str):
     if document is None or document.pageCount() <= PDF_PAGE_INDEX:
         return None
     return document.pageAt_(PDF_PAGE_INDEX)
+
+
+def render_pdf_preview(filepath: str, max_pixels: int = 2000):
+    """PDFの先頭ページをPNGのバイト列にする。プレビュー表示用。
+
+    QPixmap はPDFを読めないため、PDFの扱いを知っているこのモジュールで
+    画像に変換して渡す（描画処理を二重に持たないため）。
+    """
+    with objc.autorelease_pool():
+        page = _first_pdf_page(filepath)
+        if page is None:
+            return None
+
+        bounds = page.boundsForBox_(Quartz.kPDFDisplayBoxMediaBox)
+        width, height = bounds.size.width, bounds.size.height
+        if width < 1 or height < 1:
+            return None
+
+        # 長辺を max_pixels に合わせる（拡大はしない）
+        scale = min(max_pixels / max(width, height), 1.0) or 1.0
+        size = Foundation.NSMakeSize(width * scale, height * scale)
+
+        image = page.thumbnailOfSize_forBox_(size, Quartz.kPDFDisplayBoxMediaBox)
+        if image is None:
+            return None
+
+        data = image.TIFFRepresentation()
+        if data is None:
+            return None
+
+        rep = AppKit.NSBitmapImageRep.imageRepWithData_(data)
+        if rep is None:
+            return None
+
+        png = rep.representationUsingType_properties_(
+            AppKit.NSBitmapImageFileTypePNG, {}
+        )
+        return bytes(png) if png is not None else None
 
 
 def _render_pdf_page(page):

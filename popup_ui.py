@@ -13,6 +13,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import QSettings, QSize, QTimer, Qt
 from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
 
+from ocr_engine import render_pdf_preview
+
 # ダイアログの初期サイズ。画面が小さい場合は SCREEN_RATIO まで縮める
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 760
@@ -58,8 +60,25 @@ class PreviewPane(QLabel):
     def _load(self, filepath):
         if not filepath or not os.path.exists(filepath):
             return None
+
+        if filepath.lower().endswith(".pdf"):
+            return self._load_pdf(filepath)
+
         pixmap = QPixmap(filepath)
         return None if pixmap.isNull() else pixmap
+
+    def _load_pdf(self, filepath):
+        """QPixmapはPDFを読めないため、画像に変換してもらってから読み込む。"""
+        try:
+            data = render_pdf_preview(filepath)
+        except Exception:
+            return None
+
+        if not data:
+            return None
+
+        pixmap = QPixmap()
+        return pixmap if pixmap.loadFromData(data) else None
 
     def _rescale(self):
         if self.source is None:
