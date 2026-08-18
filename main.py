@@ -22,8 +22,9 @@ from popup_ui import run_event_loop, show_rename_dialog, stop_event_loop
 file_queue = queue.Queue()
 processed_files = set()  # 重複処理防止用のセット
 
-# launchdのWatchPathsで起動された直後に拾う、既存ファイルの新しさの上限（秒）
-STARTUP_SCAN_MAX_AGE_SECONDS = 60
+# 「撮りたて」と見なす更新時刻の上限（秒）。
+# launchdのWatchPathsで起動された直後のスキャンと、監視中のイベント判定の両方で使う。
+RECENT_FILE_MAX_AGE_SECONDS = 60
 
 
 class ScreenshotHandler(FileSystemEventHandler):
@@ -35,12 +36,20 @@ class ScreenshotHandler(FileSystemEventHandler):
         # 隠しファイル除外 ＆ PNG画像のみ対象
         if not path.lower().endswith('.png') or filename.startswith('.'):
             return
-        
+
+        if not os.path.exists(path) or path in processed_files:
+            return
+
+        # 手動リネーム（--rename）で既存ファイルの名前を変えると on_moved が発火するが、
+        # 撮りたてのスクショと違い更新時刻は古いままなので、それを手掛かりに除外する。
+        # 手動モードは別プロセスのため processed_files では共有できない。
+        if not is_recent(path):
+            return
+
         # 即座にキューへ入れる（イベントスレッドをブロックしない）
-        if os.path.exists(path) and path not in processed_files:
-            print(f"\n📸 新規スクリーンショットを検知: {path}")
-            processed_files.add(path)
-            file_queue.put(path)
+        print(f"\n📸 新規スクリーンショットを検知: {path}")
+        processed_files.add(path)
+        file_queue.put(path)
 
     # macOSのスクショ特有の挙動（一時ファイルからのリネーム発生）を検知
     def on_moved(self, event):
@@ -53,18 +62,23 @@ class ScreenshotHandler(FileSystemEventHandler):
             self.enqueue(event.src_path)
 
 
+def is_recent(path):
+    """撮りたてのファイルか（更新時刻が十分に新しいか）。"""
+    try:
+        return time.time() - os.path.getmtime(path) <= RECENT_FILE_MAX_AGE_SECONDS
+    except OSError:
+        return False
+
+
 def enqueue_recent_files(handler, watch_dir):
     """launchdのWatchPathsで起動された場合、起動のきっかけとなったスクショは
     watchdogのイベントに乗らないため、起動直後に直接キューへ入れる。"""
     if not os.path.isdir(watch_dir):
         return
 
-    now = time.time()
     for filename in os.listdir(watch_dir):
         path = os.path.join(watch_dir, filename)
-        if not os.path.isfile(path):
-            continue
-        if now - os.path.getmtime(path) <= STARTUP_SCAN_MAX_AGE_SECONDS:
+        if os.path.isfile(path):
             handler.enqueue(path)
 
 
