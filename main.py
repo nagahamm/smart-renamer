@@ -17,7 +17,7 @@ load_dotenv()
 
 from ocr_engine import extract_text
 from llm_client import get_filename_candidates
-from popup_ui import show_rename_dialog
+from popup_ui import run_event_loop, show_rename_dialog, stop_event_loop
 
 file_queue = queue.Queue()
 processed_files = set()  # 重複処理防止用のセット
@@ -161,21 +161,33 @@ if __name__ == "__main__":
     print(f"👀 監視を開始しました: {watch_dir}")
     print("終了する場合は Ctrl+C を押してください。")
 
-    # メインの軽量監視ループ（0.5秒おきにキューをチェック）
-    last_activity = time.time()
-    try:
-        while True:
-            try:
-                filepath = file_queue.get_nowait()
-                process_screenshot(filepath, config)
-                last_activity = time.time()
-            except queue.Empty:
-                if idle_timeout > 0 and time.time() - last_activity > idle_timeout:
-                    print(f"💤 {idle_timeout // 60}分間スクショがなかったため終了します。")
-                    break
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        print("\n監視を終了しました。")
+    state = {"last_activity": time.time(), "processing": False}
 
+    def check_queue():
+        """0.5秒おきにキューを確認する。イベントループから呼ばれる。"""
+        # ダイアログ表示中はネストしたイベントループが回っており、ここが再入する。
+        # ガードが無いと2件目の処理が入れ子で走り、ダイアログが二重に開く。
+        if state["processing"]:
+            return
+
+        try:
+            filepath = file_queue.get_nowait()
+        except queue.Empty:
+            if idle_timeout > 0 and time.time() - state["last_activity"] > idle_timeout:
+                print(f"💤 {idle_timeout // 60}分間スクショがなかったため終了します。")
+                stop_event_loop()
+            return
+
+        state["processing"] = True
+        try:
+            process_screenshot(filepath, config)
+        finally:
+            state["processing"] = False
+            state["last_activity"] = time.time()
+
+    # 待機中もイベントを処理し続ける必要があるため、Qtのイベントループを本体にする
+    run_event_loop(check_queue, interval_ms=500)
+
+    print("\n監視を終了しました。")
     observer.stop()
     observer.join()
