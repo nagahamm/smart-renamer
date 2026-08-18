@@ -4,12 +4,14 @@
 
 macOSで撮影したスクリーンショットを `watchdog` で検知し、Vision framework のOCRとGemini APIでファイル名候補を生成、PyQt6のポップアップで選択させてリネーム・移動する常駐ツール。
 
+監視による自動リネームに加え、`--rename` で任意のファイル・フォルダをその場でリネームする手動モードを持つ。
+
 | ファイル | 役割 |
 | --- | --- |
-| `main.py` | ファイル監視、処理キュー、全体のフロー制御 |
-| `ocr_engine.py` | Vision framework によるOCR |
+| `main.py` | ファイル監視、処理キュー、CLI、全体のフロー制御 |
+| `ocr_engine.py` | Vision framework によるOCR、PDFのテキスト抽出とページ描画 |
 | `llm_client.py` | Gemini APIへのファイル名候補リクエスト |
-| `popup_ui.py` | PyQt6のリネーム候補ダイアログ |
+| `popup_ui.py` | PyQt6のリネーム候補ダイアログ、Qtイベントループの管理 |
 | `config.yaml` | 全ての設定値と命名規則プロンプト |
 
 **設定値をコードにハードコードしないこと。** 監視先・保存先・タイムアウト・モデル名・命名規則は全て `config.yaml` に集約する。

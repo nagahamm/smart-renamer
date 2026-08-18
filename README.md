@@ -13,6 +13,8 @@ PyQt6によるポップアップUIからキーボード（`↑`/`↓`/`Enter`）
 - **自動フォールバック**: API制限やタイムアウト発生時は、日付＋4桁連番（例: `2026-07-21__0001_Capture.png`）で自動保存。
 - **超軽量常駐 (launchd)**: macOS標準のバックグラウンド管理（`launchd`）に対応。待機時CPU/GPU消費 0.0%、メモリ約20〜30MBの省電力設計。
 - **アイドルタイムアウト**: 一定時間スクショが無ければ自動終了し、常駐プロセスを残さない（`config.yaml` の `ui.idle_timeout_minutes`、デフォルト30分）。次のスクショ撮影時に `launchd` の `WatchPaths` で自動復帰。
+- **プレビュー表示**: リネーム候補と一緒に対象ファイルの中身を表示。ウィンドウは自由にリサイズでき、サイズは次回に引き継がれる。
+- **手動リネーム**: `--rename` で任意のファイル・フォルダをその場でリネーム。Finderの右クリックからも実行可能。候補の選択に加えて**自分で名前を書き換えられる**。`pdf` / `jpg` / `heic` にも対応。
 
 
 ## 🚀 1. 仮想環境の作成と有効化
@@ -88,11 +90,48 @@ python main.py
 
 ツールの実行を終了したい場合は、ターミナル上で `Ctrl + C` を押してください。
 
-## ⚙️ 5. macOS ログイン時自動常駐化 (launchd)
+### 既存ファイルを手動でリネームする
+
+他のフォルダにあるファイルや、一度リネームしたファイルを付け直したい場合は `--rename` を使います。
+
+```bash
+python main.py --rename ~/Documents/Screenshots/2026-08-18__SBI__口座管理_Capture.png
+python main.py --rename ~/Downloads          # フォルダ直下のファイルをまとめて
+```
+
+- 対応形式は `png` / `jpg` / `jpeg` / `heic` / `pdf`
+- **その場でリネームします。** 監視モードと違い `save_dir` へは移動しません
+- フォルダを渡した場合、**直下のファイルのみ**が対象です（サブフォルダは見ません）
+- タイムアウトはありません。候補を選ぶか、**編集欄で自分で書き換えて** `Enter` で確定します
+- 複数件のときは `3 / 50` の進捗が出ます。`Esc` でその1件をスキップ、「すべて中止」で残り全部を中止
+
+## 🖱 5. Finderの右クリックからリネームする（Quick Action）
+
+`--rename` をFinderの右クリックメニューに登録すると、ファイルを選んで即リネームできます。
+
+1. **ショートカット.app** を開き、新規ショートカットを作成
+2. 「クイックアクション」として登録し、**受け取る項目を「ファイルとフォルダ」**、**「Finder」から使用可能** に設定
+3. アクション「**シェルスクリプトを実行**」を追加し、以下を設定
+   - 入力: **ショートカットの入力**
+   - 入力の引き渡し方法: **引数として**
+   - シェルスクリプト:
+
+```bash
+cd /Users/cygnu/Documents/screenshot_renamer
+.venv/bin/python main.py --rename "$@"
+```
+
+4. ショートカットに名前を付けて保存（例: `AIでリネーム`）
+
+Finderでファイルやフォルダを選んで右クリック →「クイックアクション」から実行できます。
+
+※ Desktop / Documents / Downloads 配下のファイルを操作するには、実行するPythonに**フルディスクアクセス**の許可が必要になる場合があります（システム設定 → プライバシーとセキュリティ → フルディスクアクセス）。
+
+## ⚙️ 6. macOS ログイン時自動常駐化 (launchd)
 
 手動起動せず、Mac起動時にバックグラウンドで完全自動実行させる設定です。
 
-### 5-1. launchd 用設定ファイル (.plist) の作成
+### 6-1. launchd 用設定ファイル (.plist) の作成
 
 ```bash
 cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
@@ -137,7 +176,7 @@ PLIST_EOF
 
 ※ `WatchPaths` のパスは `config.yaml` の `watch_dir` と一致させてください（`~` は展開されないため絶対パスで記述します）。
 
-### 5-2. 権限設定と常駐登録
+### 6-2. 権限設定と常駐登録
 ```bash
 # フォルダ権限の許可
 chmod 755 ~/Library/LaunchAgents
@@ -146,7 +185,7 @@ chmod 755 ~/Library/LaunchAgents
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
 ```
 
-### 5-3. 管理用コマンド
+### 6-3. 管理用コマンド
 動作確認: `launchctl list | grep screenshot_renamer` または `ps aux | grep main.py`
 
 サービス停止: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist`
