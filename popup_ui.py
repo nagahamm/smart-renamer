@@ -5,13 +5,17 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel,
     QHBoxLayout, QFrame
 )
-from PyQt6.QtCore import QSize, QTimer, Qt
+from PyQt6.QtCore import QSettings, QSize, QTimer, Qt
 from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
 
 # ダイアログの初期サイズ。画面が小さい場合は SCREEN_RATIO まで縮める
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 760
 SCREEN_RATIO = 0.9
+
+# ウィンドウサイズの保存先。利用者が編集する設定ではないため config.yaml には置かない
+SETTINGS_ORG = "screenshot_renamer"
+SETTINGS_APP = "RenameDialog"
 
 
 class PreviewPane(QLabel):
@@ -112,18 +116,28 @@ class RenameDialog(QDialog):
         self.selected_name = None
         self.cards = []
         self.current_index = 0
+        self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
 
         self.init_ui()
 
     def _initial_size(self):
-        """初期サイズ。画面をはみ出さないよう上限を設ける。"""
-        width, height = DEFAULT_WIDTH, DEFAULT_HEIGHT
+        """前回のサイズがあればそれを使う。無ければ既定値。画面をはみ出さないよう上限を設ける。"""
+        width = self.settings.value("width", DEFAULT_WIDTH, type=int)
+        height = self.settings.value("height", DEFAULT_HEIGHT, type=int)
+
         screen = QApplication.primaryScreen()
         if screen:
             available = screen.availableGeometry()
             width = min(width, int(available.width() * SCREEN_RATIO))
             height = min(height, int(available.height() * SCREEN_RATIO))
-        return QSize(width, height)
+
+        return QSize(max(width, 1), max(height, 1))
+
+    def done(self, result):
+        """閉じ方（選択・キャンセル・タイムアウト）に関わらず最後のサイズを覚える"""
+        self.settings.setValue("width", self.width())
+        self.settings.setValue("height", self.height())
+        super().done(result)
 
     def init_ui(self):
         self.setWindowTitle("Screenshot Renamer")
