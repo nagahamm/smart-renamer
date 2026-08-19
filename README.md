@@ -121,7 +121,9 @@ cd /Users/cygnu/Documents/screenshot_renamer
 .venv/bin/python main.py --rename "$@"
 ```
 
-4. ショートカットに名前を付けて保存（例: `AIでリネーム`）
+4. ショートカットに名前を付けて保存（例: `Rename with Gemini`）
+
+   この名前がFinderの右クリックメニューにそのまま表示されます。
 
 Finderでファイルやフォルダを選んで右クリック →「クイックアクション」から実行できます。
 
