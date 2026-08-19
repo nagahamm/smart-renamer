@@ -118,7 +118,9 @@ class CandidateCard(QFrame):
 
         self.setFixedHeight(46)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # 選択状態は current_index で管理する。カードにフォーカスを持たせると
+        # Tab がカード間の移動に使われ、編集欄へ移せなくなる
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(12, 0, 12, 0)
@@ -204,6 +206,8 @@ class RenameDialog(QDialog):
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF;")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.setSizeGripEnabled(True)
+        # キー操作はダイアログ側で受ける
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
 
         # --- プレビュー（全面） ---
         # 画像を画面いっぱいに敷き、操作パネルはその上に重ねる
@@ -221,6 +225,7 @@ class RenameDialog(QDialog):
         # 編集したくなったら Tab か編集欄のクリックでカーソルが入る。
         self.update_card_styles()
         self.setFocus()
+        self._position_overlay()
 
         # タイマー
         self.timer = QTimer(self)
