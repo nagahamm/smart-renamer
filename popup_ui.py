@@ -8,9 +8,9 @@ from AppKit import (
 )
 from PyQt6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel,
-    QHBoxLayout, QFrame, QLineEdit
+    QHBoxLayout, QFrame, QLineEdit, QWidget
 )
-from PyQt6.QtCore import QSettings, QSize, QTimer, Qt
+from PyQt6.QtCore import QEvent, QSettings, QSize, QTimer, Qt
 from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
 
 from ocr_engine import render_pdf_preview
@@ -47,9 +47,9 @@ class PreviewPane(QLabel):
 
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.setMinimumHeight(160)
-        self.setStyleSheet(
-            "background-color: #000000; border: 1px solid #3A3A3C; border-radius: 6px;"
-        )
+        # 黒背景・枠を置くと、画像とウィンドウの比率が違うときに黒帯として目立つ。
+        # 背景を敷かず、余った部分はダイアログの地の色に馴染ませる。
+        self.setStyleSheet("background: transparent; border: none;")
 
         if self.source is None:
             # プレビューが出せなくてもリネーム操作は続行できるようにする
@@ -97,6 +97,12 @@ class PreviewPane(QLabel):
         )
         scaled.setDevicePixelRatio(ratio)
         self.setPixmap(scaled)
+
+    def aspect_ratio(self):
+        """元画像の縦横比。プレビューが無ければ None。"""
+        if self.source is None or self.source.height() == 0:
+            return None
+        return self.source.width() / self.source.height()
 
     def resizeEvent(self, event):
         self._rescale()
@@ -150,25 +156,40 @@ class RenameDialog(QDialog):
         self.filepath = filepath
         # timeout_seconds が None のときはタイマーを動かさない（手動モード）
         self.time_left = timeout_seconds
+        # 候補を選び始めたらカウントダウンをこの秒数に戻す
+        self.timeout_seconds = timeout_seconds
         self.progress = progress
         self.selected_name = None
         self.aborted = False
+        self.editing = False
         self.cards = []
         self.current_index = 0
         self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
 
         self.init_ui()
 
-    def _initial_size(self):
-        """前回のサイズがあればそれを使う。無ければ既定値。画面をはみ出さないよう上限を設ける。"""
-        width = self.settings.value("width", DEFAULT_WIDTH, type=int)
-        height = self.settings.value("height", DEFAULT_HEIGHT, type=int)
+    def _initial_size(self, aspect_ratio=None):
+        """前回のサイズがあればそれを使う。無ければ画像の縦横比に合わせる。
+
+        既定サイズを固定にすると画像との比率が合わず、上下または左右に帯ができる。
+        初回は画像の比率からウィンドウの大きさを決めて、帯が出ないようにする。
+        """
+        width = self.settings.value("width", 0, type=int)
+        height = self.settings.value("height", 0, type=int)
+
+        if width <= 0 or height <= 0:
+            width = DEFAULT_WIDTH
+            height = int(width / aspect_ratio) if aspect_ratio else DEFAULT_HEIGHT
 
         screen = QApplication.primaryScreen()
         if screen:
             available = screen.availableGeometry()
-            width = min(width, int(available.width() * SCREEN_RATIO))
-            height = min(height, int(available.height() * SCREEN_RATIO))
+            max_width = int(available.width() * SCREEN_RATIO)
+            max_height = int(available.height() * SCREEN_RATIO)
+            # 画面に収めるときも比率を保つ
+            scale = min(max_width / width, max_height / height, 1.0)
+            width = int(width * scale)
+            height = int(height * scale)
 
         return QSize(max(width, 1), max(height, 1))
 
@@ -183,17 +204,53 @@ class RenameDialog(QDialog):
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF;")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.setSizeGripEnabled(True)
-        self.resize(self._initial_size())
 
+        # --- プレビュー（全面） ---
+        # 画像を画面いっぱいに敷き、操作パネルはその上に重ねる
+        self.preview = PreviewPane(self.filepath)
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(20, 18, 20, 16)
-        layout.setSpacing(10)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.preview)
+
+        self.resize(self._initial_size(self.preview.aspect_ratio()))
+
+        self._build_overlay()
+
+        # 初期表示・フォーカス設定
+        # 最初はカーソルを立てず、候補を選べる状態にする。
+        # 編集したくなったら Tab か編集欄のクリックでカーソルが入る。
+        self.update_card_styles()
+        self.setFocus()
+
+        # タイマー
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_timer)
+        if self._has_timeout():
+            self.timer.start(1000)
+
+    def _build_overlay(self):
+        """画像の上に重ねる操作パネル。レイアウトには載せず、自前で位置を決める。"""
+        self.overlay = QWidget(self)
+        self.overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.overlay.setStyleSheet("""
+            QWidget#overlay {
+                background-color: rgba(24, 24, 26, 0.82);
+                border: 1px solid rgba(255, 255, 255, 0.10);
+                border-radius: 14px;
+            }
+        """)
+        self.overlay.setObjectName("overlay")
+
+        layout = QVBoxLayout(self.overlay)
+        layout.setContentsMargins(18, 14, 18, 14)
+        layout.setSpacing(8)
 
         # --- ヘッダー ---
         header_layout = QHBoxLayout()
 
         title_label = QLabel("ファイル名を選択")
-        title_label.setFont(QFont("SF Pro Text", 13, QFont.Weight.Bold))
+        title_label.setFont(QFont("SF Pro Text", 12, QFont.Weight.Bold))
+        title_label.setStyleSheet("background: transparent;")
         header_layout.addWidget(title_label)
         header_layout.addStretch()
 
@@ -202,26 +259,16 @@ class RenameDialog(QDialog):
             done, total = self.progress
             progress_label = QLabel(f"{done} / {total}")
             progress_label.setFont(QFont("SF Pro Text", 11))
-            progress_label.setStyleSheet("color: #8E8E93;")
+            progress_label.setStyleSheet("color: #8E8E93; background: transparent;")
             header_layout.addWidget(progress_label)
 
         layout.addLayout(header_layout)
 
         self.timer_label = QLabel()
         self.timer_label.setFont(QFont("SF Pro Text", 10))
-        self.timer_label.setStyleSheet("color: #0A84FF;")
-        if self._has_timeout():
-            self.timer_label.setText(
-                f"選択されない場合、{self.time_left}秒後に第1候補で自動保存します"
-            )
-        else:
-            self.timer_label.setText("名前を選ぶか、直接書き換えて Enter で確定します")
+        self.timer_label.setStyleSheet("color: #0A84FF; background: transparent;")
+        self.timer_label.setText(self._status_text())
         layout.addWidget(self.timer_label)
-
-        # --- プレビュー ---
-        # 余った領域は全てプレビューに割り当てる。ウィンドウを広げた分だけ大きく見える
-        self.preview = PreviewPane(self.filepath)
-        layout.addWidget(self.preview, stretch=1)
 
         # --- 候補リスト ---
         for cand in self.candidates:
@@ -230,21 +277,25 @@ class RenameDialog(QDialog):
             self.cards.append(card)
 
         # --- 編集欄 ---
-        # 候補を選ぶとここに入る。そのまま書き換えて確定できる
+        # 候補を選ぶとここに入る。Tab またはクリックでカーソルが入り、書き換えられる
         self.name_edit = QLineEdit()
         self.name_edit.setFont(QFont("SF Mono", 11))
-        self.name_edit.setFixedHeight(38)
+        self.name_edit.setFixedHeight(36)
+        # Tabキーは自前で処理する。勝手にフォーカスが移らないようクリックのみ許可する
+        self.name_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.name_edit.setStyleSheet("""
             QLineEdit {
-                background-color: #2C2C2E;
-                border: 1px solid #3A3A3C;
-                border-radius: 6px;
+                background-color: rgba(60, 60, 64, 0.85);
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
                 padding: 0 10px;
                 color: #FFFFFF;
             }
             QLineEdit:focus { border: 2px solid #0A84FF; }
         """)
         self.name_edit.returnPressed.connect(self.confirm_edited_name)
+        # 編集欄にカーソルが入ったらタイマーを止めるため、フォーカスを監視する
+        self.name_edit.installEventFilter(self)
         if self.candidates:
             self.name_edit.setText(self.candidates[0])
         layout.addWidget(self.name_edit)
@@ -257,68 +308,120 @@ class RenameDialog(QDialog):
             abort_btn = QLabel("すべて中止")
             abort_btn.setFont(QFont("SF Pro Text", 10))
             abort_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            abort_btn.setStyleSheet("color: #FF9F0A; margin-right: 16px;")
+            abort_btn.setStyleSheet("color: #FF9F0A; margin-right: 16px; background: transparent;")
             abort_btn.mousePressEvent = lambda e: self.on_abort()
             footer_layout.addWidget(abort_btn)
 
         cancel_btn = QLabel("スキップ（変更しない）" if self.progress else "キャンセル（保存しない）")
         cancel_btn.setFont(QFont("SF Pro Text", 10))
         cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.setStyleSheet("color: #FF453A;")
+        cancel_btn.setStyleSheet("color: #FF453A; background: transparent;")
         cancel_btn.mousePressEvent = lambda e: self.on_select(None)
         footer_layout.addWidget(cancel_btn)
 
         layout.addLayout(footer_layout)
 
-        # 初期表示・フォーカス設定
-        # 矢印キーは dialog 側で拾うため、フォーカスは常に編集欄に置く
-        self.update_card_styles()
-        self.name_edit.setFocus()
+    def _position_overlay(self):
+        """操作パネルをウィンドウ下部に配置する。"""
+        if not hasattr(self, "overlay"):
+            return
+        margin = 20
+        width = max(self.width() - margin * 2, 200)
+        height = self.overlay.sizeHint().height()
+        self.overlay.setGeometry(margin, self.height() - height - margin, width, height)
+        self.overlay.raise_()
 
-        # タイマー
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_timer)
-        if self._has_timeout():
-            self.timer.start(1000)
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._position_overlay()
 
     def _has_timeout(self):
         return bool(self.time_left)
+
+    def _status_text(self):
+        if self.editing:
+            return "自動保存を止めました。Enter で確定します"
+        if self._has_timeout():
+            return f"選択されない場合、{self.time_left}秒後に第1候補で自動保存します"
+        return "↑↓ で候補を選び、Tab で書き換え、Enter で確定します"
 
     def update_card_styles(self):
         """選択状態に合わせてカードとラベルのスタイルを一括変更"""
         for i, card in enumerate(self.cards):
             is_active = (i == self.current_index)
             
-            border = "2px solid #0A84FF" if is_active else "1px solid #3A3A3C"
-            text_color = "#64D2FF" if is_active else "#FFFFFF"
+            border = (
+                "2px solid #0A84FF" if is_active
+                else "1px solid rgba(255, 255, 255, 0.12)"
+            )
+            background = (
+                "rgba(10, 132, 255, 0.22)" if is_active
+                else "rgba(70, 70, 74, 0.55)"
+            )
+            text_color = "#7FD3FF" if is_active else "#FFFFFF"
 
             card.setStyleSheet(f"""
                 QFrame {{
-                    background-color: #2C2C2E;
+                    background-color: {background};
                     border: {border};
-                    border-radius: 6px;
+                    border-radius: 8px;
                 }}
                 QFrame:hover {{
-                    background-color: #3A3A3C;
+                    background-color: rgba(100, 100, 105, 0.65);
                 }}
             """)
             card.label.setStyleSheet(f"color: {text_color}; border: none; background: transparent;")
 
     def select_candidate(self, index):
-        """候補を選び、編集欄の中身を差し替える。"""
+        """候補を選び、編集欄の中身を差し替える。カーソルは立てない。"""
         if not (0 <= index < len(self.candidates)):
             return
         self.current_index = index
         self.update_card_styles()
         self.name_edit.setText(self.candidates[index])
+        # 候補を見比べている最中に自動保存されないよう、カウントダウンを戻す
+        self.extend_timeout()
+
+    def extend_timeout(self):
+        """操作があったらカウントダウンを最初からやり直す。"""
+        if self.editing or not self._has_timeout():
+            return
+        self.time_left = self.timeout_seconds
+        self.timer_label.setText(self._status_text())
+
+    def enter_edit_mode(self):
+        """編集欄にカーソルを入れる。自分で書く以上、自動保存は止める。"""
+        if self.editing:
+            return
+        self.editing = True
+        self.timer.stop()
+        self.timer_label.setText(self._status_text())
         self.name_edit.setFocus()
+        self.name_edit.setCursorPosition(len(self.name_edit.text()))
+
+    def eventFilter(self, obj, event):
+        # 編集欄をクリックされた場合もタイマーを止める
+        if obj is self.name_edit and event.type() == QEvent.Type.FocusIn:
+            self.enter_edit_mode()
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event):
         key = event.key()
 
+        # 編集中は矢印キーを文字カーソルの移動として扱う（候補は切り替えない）
+        if self.editing and key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+            super().keyPressEvent(event)
+            return
+
         if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
             delta = 1 if key == Qt.Key.Key_Down else -1
             self.select_candidate(self.current_index + delta)
+
+        elif key == Qt.Key.Key_Tab:
+            self.enter_edit_mode()
+
+        elif key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.confirm_edited_name()
 
         elif key == Qt.Key.Key_Escape:
             self.on_select(None)
@@ -332,9 +435,10 @@ class RenameDialog(QDialog):
     def update_timer(self):
         self.time_left -= 1
         if self.time_left > 0:
-            self.timer_label.setText(f"選択されない場合、{self.time_left}秒後に第1候補で自動保存します")
+            self.timer_label.setText(self._status_text())
         else:
-            self.on_select(self.candidates[0] if self.candidates else None)
+            # 放置された場合は従来通り、現在選んでいる候補で自動保存する
+            self.on_select(self.name_edit.text() or None)
 
     def on_select(self, name):
         self.timer.stop()
