@@ -69,7 +69,7 @@ def _first_pdf_page(filepath: str):
     document = Quartz.PDFDocument.alloc().initWithURL_(url)
     if document is None or document.pageCount() <= PDF_PAGE_INDEX:
         return None
-    return document.pageAt_(PDF_PAGE_INDEX)
+    return document.pageAtIndex_(PDF_PAGE_INDEX)
 
 
 def render_pdf_preview(filepath: str, max_pixels: int = 2000):
