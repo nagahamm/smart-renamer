@@ -1,4 +1,4 @@
-# Screenshot Auto-Renamer
+# Smart Renamer
 
 Macで撮影したスクリーンショットをリアルタイムに自動検知し、Google Gemini (3.1 Flash Lite) のOCR機能とLLMを活用して、内容（領収書、財務データ、学習教材など）に合わせた最適なファイル名を提案・自動リネームするバックグラウンドツールです。
 
@@ -23,7 +23,7 @@ PyQt6によるポップアップUIからキーボード（`↑`/`↓`/`Enter`）
 
 ```bash
 # プロジェクトのディレクトリに移動
-cd ~/Documents/screenshot_renamer
+cd ~/Documents/smart-renamer
 
 # 仮想環境（.venv）を作成
 python3 -m venv .venv
@@ -55,7 +55,7 @@ pip install watchdog google-genai pyyaml python-dotenv PyQt6 pyobjc-framework-Co
 
 セキュリティを確保するため、APIキーはGitの管理対象外である `.env` ファイルに保存します。
 
-1. プロジェクトのルートディレクトリ（`~/Documents/screenshot_renamer`）に `.env` という名前のファイルを作成します。
+1. プロジェクトのルートディレクトリ（`~/Documents/smart-renamer`）に `.env` という名前のファイルを作成します。
 2. 取得したGoogle Gemini APIキーを以下のように記述して保存してください。
 
 ```env
@@ -115,10 +115,10 @@ python main.py --rename ~/Downloads          # フォルダ直下のファイル
    ※ この設定項目の名前・場所はmacOSのバージョンによって変わる。上記はおおよその目安として、実際の画面の文言に従うこと
 3. アクション「**シェルスクリプトを実行**」を追加し、以下を設定
    - 入力の引き渡し方法: **引数として**
-   - シェルスクリプト（`/path/to/screenshot_renamer` は実際にこのプロジェクトを置いた場所に置き換える）:
+   - シェルスクリプト（`/path/to/smart-renamer` は実際にこのプロジェクトを置いた場所に置き換える）:
 
 ```bash
-cd /path/to/screenshot_renamer
+cd /path/to/smart-renamer
 .venv/bin/python main.py --rename "$@"
 ```
 
@@ -141,19 +141,19 @@ Finderでファイルやフォルダを選んで右クリック →「クイッ�
 ### 6-1. launchd 用設定ファイル (.plist) の作成
 
 ```bash
-cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "[http://www.apple.com/DTDs/PropertyList-1.0.dtd](http://www.apple.com/DTDs/PropertyList-1.0.dtd)">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.screenshot_renamer</string>
+    <string>com.user.smart_renamer</string>
 
     <key>ProgramArguments</key>
     <array>
         <string>/usr/bin/osascript</string>
         <string>-e</string>
-        <string>do shell script "cd /path/to/screenshot_renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
+        <string>do shell script "cd /path/to/smart-renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -189,19 +189,19 @@ PLIST_EOF
 chmod 755 ~/Library/LaunchAgents
 
 # ユーザーセッションへ登録・起動
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
 ```
 
 ### 6-3. 管理用コマンド
-動作確認: `launchctl list | grep screenshot_renamer` または `ps aux | grep main.py`
+動作確認: `launchctl list | grep smart_renamer` または `ps aux | grep main.py`
 
-サービス停止: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist`
+サービス停止: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist`
 
 再読み込み:
 
 ```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
 ```
 
 ログ確認: `cat app_error.log`

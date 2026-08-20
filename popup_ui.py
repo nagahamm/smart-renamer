@@ -189,7 +189,7 @@ class RenameDialog(QDialog):
         return QSize(max(width, 1), max(height, 1))
 
     def init_ui(self):
-        self.setWindowTitle("Screenshot Renamer")
+        self.setWindowTitle("Smart Renamer")
         self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF;")
         self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
         self.setSizeGripEnabled(True)
