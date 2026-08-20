@@ -111,13 +111,14 @@ python main.py --rename ~/Downloads          # フォルダ直下のファイル
 
 1. **ショートカット.app** を開き、新規ショートカットを作成
 2. 「クイックアクション」として登録し、**受け取る項目を「ファイルとフォルダ」**、**「Finder」から使用可能** に設定
+
+   ※ この設定項目の名前・場所はmacOSのバージョンによって変わる。上記はおおよその目安として、実際の画面の文言に従うこと
 3. アクション「**シェルスクリプトを実行**」を追加し、以下を設定
-   - 入力: **ショートカットの入力**
    - 入力の引き渡し方法: **引数として**
-   - シェルスクリプト:
+   - シェルスクリプト（`/path/to/screenshot_renamer` は実際にこのプロジェクトを置いた場所に置き換える）:
 
 ```bash
-cd /Users/cygnu/Documents/screenshot_renamer
+cd /path/to/screenshot_renamer
 .venv/bin/python main.py --rename "$@"
 ```
 
@@ -125,7 +126,11 @@ cd /Users/cygnu/Documents/screenshot_renamer
 
    この名前がFinderの右クリックメニューにそのまま表示されます。
 
-Finderでファイルやフォルダを選んで右クリック →「クイックアクション」から実行できます。
+5. ショートカットを保存しても右クリックメニューに出てこない場合、**システム設定 → 一般 → 機能拡張**（またはmacOSのバージョンによっては「プライバシーとセキュリティ → 機能拡張」）にある **Finder関連の拡張機能一覧** を開き、作成したショートカットにチェックが入っているか確認する
+
+   ※ この項目はGUI操作の自動化・実機確認ができていない。見つからない場合はmacOSのバージョンに応じて「機能拡張」を検索するか、システム設定内を確認すること。
+
+Finderでファイルやフォルダを選んで右クリック →「クイックアクション」から実行できます。メニューに出てこない場合は、Finderを再起動（`Option`キーを押しながらDockのFinderアイコンを右クリック → 「終了」、または `killall Finder`）してみてください。
 
 ※ Desktop / Documents / Downloads 配下のファイルを操作するには、実行するPythonに**フルディスクアクセス**の許可が必要になる場合があります（システム設定 → プライバシーとセキュリティ → フルディスクアクセス）。
 
@@ -148,7 +153,7 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
     <array>
         <string>/usr/bin/osascript</string>
         <string>-e</string>
-        <string>do shell script "cd /Users/cygnu/Documents/screenshot_renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
+        <string>do shell script "cd /path/to/screenshot_renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -164,7 +169,7 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.screenshot_renamer.plist
     <!-- 監視ディレクトリに変更があった時（＝スクショ撮影時）に launchd が再起動する -->
     <key>WatchPaths</key>
     <array>
-        <string>/Users/cygnu/Desktop</string>
+        <string>/Users/your-username/Desktop</string>
     </array>
 
     <key>LimitLoadToSessionType</key>
