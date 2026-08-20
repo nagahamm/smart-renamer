@@ -10,19 +10,17 @@ from PyQt6.QtWidgets import (
     QApplication, QDialog, QVBoxLayout, QLabel,
     QHBoxLayout, QFrame, QLineEdit, QWidget
 )
-from PyQt6.QtCore import QEvent, QSettings, QSize, QTimer, Qt
+from PyQt6.QtCore import QEvent, QSize, QTimer, Qt
 from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
 
 from ocr_engine import render_pdf_preview
 
-# ダイアログの初期サイズ。画面が小さい場合は SCREEN_RATIO まで縮める
+# ウィンドウの基準サイズ。実際の幅・高さは常にプレビュー画像の縦横比から決め直す
+# （Preview.appのように、開くたびに画像に合わせて余白なく収める）。
+# 画像が無い場合のみこの値を使う。画面が小さい場合は SCREEN_RATIO まで縮める
 DEFAULT_WIDTH = 1280
 DEFAULT_HEIGHT = 760
 SCREEN_RATIO = 0.9
-
-# ウィンドウサイズの保存先。利用者が編集する設定ではないため config.yaml には置かない
-SETTINGS_ORG = "screenshot_renamer"
-SETTINGS_APP = "RenameDialog"
 
 
 def sanitize_filename(name):
@@ -166,22 +164,17 @@ class RenameDialog(QDialog):
         self.editing = False
         self.cards = []
         self.current_index = 0
-        self.settings = QSettings(SETTINGS_ORG, SETTINGS_APP)
 
         self.init_ui()
 
     def _initial_size(self, aspect_ratio=None):
-        """前回のサイズがあればそれを使う。無ければ画像の縦横比に合わせる。
+        """画像の縦横比からウィンドウの大きさを決める。
 
         既定サイズを固定にすると画像との比率が合わず、上下または左右に帯ができる。
-        初回は画像の比率からウィンドウの大きさを決めて、帯が出ないようにする。
+        開くたびに画像の比率からウィンドウを決め直すことで、帯が出ないようにする。
         """
-        width = self.settings.value("width", 0, type=int)
-        height = self.settings.value("height", 0, type=int)
-
-        if width <= 0 or height <= 0:
-            width = DEFAULT_WIDTH
-            height = int(width / aspect_ratio) if aspect_ratio else DEFAULT_HEIGHT
+        width = DEFAULT_WIDTH
+        height = int(width / aspect_ratio) if aspect_ratio else DEFAULT_HEIGHT
 
         screen = QApplication.primaryScreen()
         if screen:
@@ -194,12 +187,6 @@ class RenameDialog(QDialog):
             height = int(height * scale)
 
         return QSize(max(width, 1), max(height, 1))
-
-    def done(self, result):
-        """閉じ方（選択・キャンセル・タイムアウト）に関わらず最後のサイズを覚える"""
-        self.settings.setValue("width", self.width())
-        self.settings.setValue("height", self.height())
-        super().done(result)
 
     def init_ui(self):
         self.setWindowTitle("Screenshot Renamer")
