@@ -124,10 +124,10 @@ def _render_pdf_page(page):
     if image is None:
         return None
 
-    # CGImageForProposedRect: の第1引数は in/out のため、PyObjCでは
-    # (CGImage, rect) のタプルで返ることがある
-    result = image.CGImageForProposedRect_context_hints_(None, None, None)
-    return result[0] if isinstance(result, tuple) else result
+    # CGImageForProposedRect: の第1引数は in/out の NSRect* のため、
+    # PyObjCは (CGImage, rect) のタプルで返す
+    cg_image, _ = image.CGImageForProposedRect_context_hints_(None, None, None)
+    return cg_image
 
 
 def _recognize(handler) -> str:
