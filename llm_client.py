@@ -1,21 +1,9 @@
 import os
-import yaml
 import json
 from datetime import datetime
 from google import genai
 from google.genai import types
 
-
-# カレントディレクトリに依存しないよう、このファイルからの相対で解決する
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
-
-with open(CONFIG_PATH, "r", encoding="utf-8") as f:
-    config = yaml.safe_load(f)
-
-# yamlから設定を取得（値がない場合のデフォルト値も設定）
-MODEL_NAME = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
-# APIが詰まって無期限にブロックし続けるのを防ぐためのタイムアウト（秒）
-TIMEOUT_SECONDS = config.get("llm", {}).get("timeout_seconds", 15)
 
 API_KEY_ENV = "GEMINI_API_KEY"
 
@@ -24,8 +12,11 @@ API_KEY_ENV = "GEMINI_API_KEY"
 def get_api_key():
     return os.environ.get(API_KEY_ENV)
 
-# Gemini APIを呼び出してファイル名の候補を取得する
-def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
+# Gemini APIを呼び出してファイル名の候補を取得する。
+# モデル名とタイムアウトは設定ファイルの値を main.py から受け取る
+def get_filename_candidates(
+    ocr_text: str, prompt_template: str, model: str, timeout_seconds: int
+) -> list:
     today_str = datetime.now().strftime("%Y-%m-%d")
     
     api_key = get_api_key()
@@ -58,7 +49,7 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
 
     try:
         response = client.models.generate_content(
-            model=MODEL_NAME,
+            model=model,
             contents=f"【OCRテキスト】\n{ocr_text}",
             config=types.GenerateContentConfig(
                 system_instruction=system_instruction,
@@ -66,7 +57,7 @@ def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
                 temperature=0.2,
                 # ネットワーク不調時に無期限でブロックし、ファイルがリネーム待ちのまま
                 # 固まってしまうのを防ぐためのタイムアウト設定
-                http_options=types.HttpOptions(timeout=TIMEOUT_SECONDS * 1000),
+                http_options=types.HttpOptions(timeout=timeout_seconds * 1000),
             ),
         )
         data = json.loads(response.text)
