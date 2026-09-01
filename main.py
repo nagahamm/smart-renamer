@@ -172,13 +172,79 @@ def rename_manually(paths, config):
             print("↩︎ スキップしました。")
 
 
+# ファイル名に含まれる日付。区切りの有無と種類だけが違う
+DATE_PATTERNS = [
+    re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)"),
+    re.compile(r"(?<!\d)(\d{4})_(\d{2})_(\d{2})(?!\d)"),
+    re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)"),
+]
+
+
+def extract_date_from_name(filepath):
+    """ファイル名に含まれる日付を YYYY-MM-DD で返す。見つからなければ None。"""
+    stem = os.path.splitext(os.path.basename(filepath))[0]
+    for pattern in DATE_PATTERNS:
+        for year, month, day in pattern.findall(stem):
+            try:
+                return datetime(int(year), int(month), int(day)).strftime("%Y-%m-%d")
+            except ValueError:
+                # 8桁の数字が金額や連番だった場合。次の候補を試す
+                continue
+    return None
+
+
+def get_file_date(filepath):
+    """対象ファイルの日付。ファイル名の日付を優先し、無ければ作成日時を使う。"""
+    from_name = extract_date_from_name(filepath)
+    if from_name:
+        return from_name
+
+    stat = os.stat(filepath)
+    # macOSでは作成日時が取れる。取れない場合のみ更新日時にフォールバックする
+    timestamp = getattr(stat, "st_birthtime", stat.st_mtime)
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+
+
+def prefer_file_date(candidates, file_date, today):
+    """本日の日付で生成された候補を、最後の1件を残してファイルの日付に差し替える。
+
+    OCR本文から日付を読み取れた候補は本日の日付にならないため、そのまま残る。
+    内容由来の日付の方が正しく、書き換えると壊れるため触らない。
+    本日の日付の候補を1件残すのは、撮り直しなどで今日の日付を使いたい場合のため。
+    """
+    if file_date == today:
+        return candidates
+
+    # YYYY-MM-DD と、学習系ルールの YYYY-MM の両方を対象にする
+    prefixes = [(today, file_date), (today[:7], file_date[:7])]
+
+    matches = []
+    for index, name in enumerate(candidates):
+        # 長い YYYY-MM-DD から先に見て、1候補につき1回だけ差し替える
+        for old, new in prefixes:
+            if name.startswith(old):
+                matches.append((index, old, new))
+                break
+
+    result = list(candidates)
+    for index, old, new in matches[:-1]:
+        result[index] = new + result[index][len(old):]
+    return result
+
+
 def build_candidates(filepath, prompt_template):
     """OCR/テキスト抽出からファイル名候補までをまとめる。監視・手動の共通処理。"""
     print("🔍 テキストを抽出中...")
     text = extract_text(filepath)
 
     print("🧠 LLMへファイル名候補をリクエスト中...")
-    return get_filename_candidates(text, prompt_template)
+    candidates = get_filename_candidates(text, prompt_template)
+    if not candidates:
+        return candidates
+
+    return prefer_file_date(
+        candidates, get_file_date(filepath), datetime.now().strftime("%Y-%m-%d")
+    )
 
 
 def process_screenshot(filepath, config):
