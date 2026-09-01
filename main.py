@@ -47,6 +47,12 @@ class ScreenshotHandler(FileSystemEventHandler):
         if not is_recent(path):
             return
 
+        # リネームで移動済みのパスを落とす。アイドルタイムアウトを無効にして
+        # 常駐させ続けた場合に、重複防止用のセットが際限なく膨らむのを防ぐ
+        processed_files.difference_update(
+            {done for done in processed_files if not os.path.exists(done)}
+        )
+
         # 即座にキューへ入れる（イベントスレッドをブロックしない）
         print(f"\n📸 新規スクリーンショットを検知: {path}")
         processed_files.add(path)
