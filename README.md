@@ -21,10 +21,12 @@ PyQt6によるポップアップUIからキーボード（`↑`/`↓`/`Enter`）
 
 macOS専用です（Vision framework / PyObjC / PyQt6 に依存）。
 
+**設置場所は `~/Documents` / `~/Desktop` / `~/Downloads` の外にしてください。** この3つはmacOSの保護対象（TCC）で、Finderの右クリックからリネームを実行するプロセスが読み取れず失敗します。ホーム直下（`~/smart-renamer` など）が無難です。常駐だけなら保護対象でも動きますが、右クリックが使えません。
+
 事前に [Google AI Studio](https://aistudio.google.com/apikey) でGemini APIキー（`AIza...` から始まる文字列）を取得しておいてください。
 
 ```bash
-cd ~/Documents/smart-renamer
+cd ~/smart-renamer
 ./setup.sh
 ```
 
@@ -113,20 +115,22 @@ Automator のサービスは `setup.sh` から自動生成できる代わりに�
 ### `Operation not permitted` で失敗する場合
 
 ```
-The action "Run Shell Script" encountered an error: "realpath: .venv/bin/: Operation not permitted"
+PermissionError: [Errno 1] Operation not permitted: '/Users/you/Documents/smart-renamer/.venv/pyvenv.cfg'
 ```
 
-サービスを実行するプロセス（`WorkflowServiceRunner`）が、プロジェクトのあるフォルダを読めていません。Desktop / Documents / Downloads 配下はmacOSの保護対象です。
+プロジェクトを `~/Documents` / `~/Desktop` / `~/Downloads` に置いている場合に出ます。サービスを実行する `WorkflowServiceRunner` がこれらのフォルダを読めないためです。
 
-**システム設定 → プライバシーとセキュリティ → フルディスクアクセス** を開き、`+` から以下を追加して有効にしてください。
+**プロジェクトを保護対象外の場所へ移してください。**
 
+```bash
+launchctl bootout gui/$(id -u)/com.user.smart_renamer
+mv ~/Documents/smart-renamer ~/smart-renamer
+~/smart-renamer/setup.sh
 ```
-/System/Library/Frameworks/AppKit.framework/Versions/C/XPCServices/WorkflowServiceRunner.xpc
-```
 
-（`Cmd + Shift + G` でパスを直接入力できます）
+`setup.sh` が新しいパスで plist と サービス を貼り直します。
 
-追加後、`killall Finder` して試し直してください。
+権限を与えて解決しようとしても回避できません。`WorkflowServiceRunner.xpc` はフルディスクアクセスの選択ダイアログで選べず、`osascript` の `do shell script` を挟んでも TCC の帰属は変わりませんでした（macOS 26 で確認）。
 
 ### ショートカット.app で登録する場合
 
@@ -179,7 +183,7 @@ launchctl kickstart -k gui/$(id -u)/com.user.smart_renamer
 | ファイル名が全て `0001_Capture.png` になる | `.env` の `GEMINI_API_KEY` を確認。未設定なら起動時に `app.log` にエラーが出る |
 | ポップアップが出ない | `app.log` / `app_error.log` を確認 |
 | 右クリックに出てこない | 「クイックアクション」ではなく「サービス」を見る。`killall Finder` |
-| 右クリックが `Operation not permitted` | `WorkflowServiceRunner.xpc` にフルディスクアクセスを許可（→ 3章） |
+| 右クリックが `Operation not permitted` | プロジェクトが `~/Documents` などの保護対象にある。外へ移す（→ 3章） |
 
 
 ## 📎 付録: 手動セットアップ
@@ -189,7 +193,7 @@ launchctl kickstart -k gui/$(id -u)/com.user.smart_renamer
 ### A-1. 仮想環境と依存パッケージ
 
 ```bash
-cd ~/Documents/smart-renamer
+cd ~/smart-renamer
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 ```
