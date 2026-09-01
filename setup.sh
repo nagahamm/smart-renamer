@@ -131,7 +131,7 @@ info "$PLIST_PATH を登録しました"
 
 
 # 4. Finderの右クリックメニュー（Automator の Quick Action）
-step "Finderの右クリックメニュー（Quick Action）"
+step "Finderの右クリックメニュー（サービス）"
 
 rm -rf "$QUICK_ACTION_PATH"
 mkdir -p "$QUICK_ACTION_PATH/Contents"
@@ -310,7 +310,11 @@ info "「${QUICK_ACTION_NAME}」を登録しました"
 step "セットアップ完了"
 info "常駐:       launchctl print gui/$(id -u)/$LAUNCHD_LABEL"
 info "ログ:       $PROJECT_DIR/app.log"
-info "右クリック: Finderでファイルを選択 →「クイックアクション」→「${QUICK_ACTION_NAME}」"
+info "右クリック: Finderでファイルを選択 →「サービス」→「${QUICK_ACTION_NAME}」"
 printf '\n'
-warn "右クリックメニューに出てこない場合は Finder を再起動してください: killall Finder"
-warn "初回実行時に、Desktop / Documents などへのアクセス許可を求められることがあります"
+warn "メニューに出てこない場合は Finder を再起動してください: killall Finder"
+warn "Operation not permitted で失敗する場合は、システム設定 → プライバシーとセキュリティ →"
+warn "フルディスクアクセス に WorkflowServiceRunner を追加してください"
+warn "（$PROJECT_DIR がDesktop/Documents/Downloads配下にある場合に必要です）"
+warn "「クイックアクション」の側に、より上位に出したい場合は README の"
+warn "「ショートカット.app で登録する場合」を参照してください"

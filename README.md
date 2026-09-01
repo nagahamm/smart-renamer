@@ -37,7 +37,7 @@ cd ~/Documents/smart-renamer
 | 仮想環境 | `.venv` の作成と `requirements.txt` のインストール |
 | APIキー | `.env` の作成（既にキーがあれば触りません） |
 | 常駐登録 | `.plist` を生成して `launchd` に登録。ログイン時に自動で動きます |
-| 右クリック | Finderの「クイックアクション」に `Rename with Gemini` を登録 |
+| 右クリック | Finderの「サービス」に `Rename with Gemini` を登録 |
 
 パスは全てスクリプトが埋めるため、プロジェクトをどこに置いても構いません。
 
@@ -88,18 +88,49 @@ cd ~/Documents/smart-renamer
 - 複数件のときは `3 / 50` の進捗が出ます。`Esc` でその1件をスキップ、「すべて中止」で残り全部を中止
 
 
-## 🖱 3. Finderの右クリックからリネームする（Quick Action）
+## 🖱 3. Finderの右クリックからリネームする
 
-`setup.sh` が Automator のクイックアクションを `~/Library/Services/Rename with Gemini.workflow` に作成済みです。Finderでファイルやフォルダを選んで右クリック →「クイックアクション」→「Rename with Gemini」で実行できます。
+`setup.sh` が Automator のサービスを `~/Library/Services/Rename with Gemini.workflow` に作成済みです。Finderでファイルやフォルダを選んで **右クリック →「サービス」→「Rename with Gemini」** で実行できます。
 
-メニューに出てこない場合:
+### メニューのどこに出るか
+
+macOS の右クリックメニューには「クイックアクション」と「サービス」の2つのサブメニューがあり、**登録方法によって出る場所が変わります。**
+
+| 登録方法 | 出る場所 | 並び順 | 自動登録 |
+| --- | --- | --- | --- |
+| Automator（`setup.sh`） | 「サービス」 | 名前順で固定 | できる |
+| ショートカット.app | 「クイックアクション」 | 変えられる | できない（GUI操作が必要） |
+
+「クイックアクション」は「サービス」より上に表示され、**システム設定 → 一般 → ログイン項目と機能拡張 → Finder** で並び順を変えられます。一番上に置きたい場合はショートカット.app で登録してください。
+
+Automator のサービスは `setup.sh` から自動生成できる代わりに、「サービス」サブメニュー内の名前順に固定されます。
+
+### メニューに出てこない場合
 
 - Finderを再起動する（`killall Finder`）
-- **システム設定 → 一般 → 機能拡張**（macOSのバージョンによっては「プライバシーとセキュリティ → 機能拡張」）の **Finder関連の拡張機能一覧** で、`Rename with Gemini` にチェックが入っているか確認する
+- **システム設定 → 一般 → ログイン項目と機能拡張**（macOSのバージョンによっては「プライバシーとセキュリティ → 機能拡張」）で、`Rename with Gemini` にチェックが入っているか確認する
+
+### `Operation not permitted` で失敗する場合
+
+```
+The action "Run Shell Script" encountered an error: "realpath: .venv/bin/: Operation not permitted"
+```
+
+サービスを実行するプロセス（`WorkflowServiceRunner`）が、プロジェクトのあるフォルダを読めていません。Desktop / Documents / Downloads 配下はmacOSの保護対象です。
+
+**システム設定 → プライバシーとセキュリティ → フルディスクアクセス** を開き、`+` から以下を追加して有効にしてください。
+
+```
+/System/Library/Frameworks/AppKit.framework/Versions/C/XPCServices/WorkflowServiceRunner.xpc
+```
+
+（`Cmd + Shift + G` でパスを直接入力できます）
+
+追加後、`killall Finder` して試し直してください。
 
 ### ショートカット.app で登録する場合
 
-Automator ではなくショートカット.app で管理したい場合は、こちらの手順でも同じことができます。`setup.sh` が作ったクイックアクションは `rm -rf ~/Library/Services/"Rename with Gemini.workflow"` で削除できます。
+「クイックアクション」に出したい場合、または並び順を変えたい場合はこちらです。`setup.sh` が作ったサービスは `rm -rf ~/Library/Services/"Rename with Gemini.workflow"` で削除できます。
 
 1. **ショートカット.app** を開き、新規ショートカットを作成
 2. 「クイックアクション」として登録し、**受け取る項目を「ファイルとフォルダ」**、**「Finder」から使用可能** に設定
@@ -110,15 +141,13 @@ Automator ではなくショートカット.app で管理したい場合は、�
    - シェルスクリプト（`/path/to/smart-renamer` は実際にこのプロジェクトを置いた場所に置き換える）:
 
 ```bash
-cd /path/to/smart-renamer
-.venv/bin/python main.py --rename "$@"
+/path/to/smart-renamer/.venv/bin/python /path/to/smart-renamer/main.py --rename "$@"
 ```
 
 4. ショートカットに名前を付けて保存（例: `Rename with Gemini`）
 
    この名前がFinderの右クリックメニューにそのまま表示されます。
-
-※ Desktop / Documents / Downloads 配下のファイルを操作するには、実行するPythonに**フルディスクアクセス**の許可が必要になる場合があります（システム設定 → プライバシーとセキュリティ → フルディスクアクセス）。
+5. **システム設定 → 一般 → ログイン項目と機能拡張 → Finder** で並び順を一番上にする
 
 
 ## ⚙️ 4. 常駐の管理 (launchd)
@@ -149,7 +178,8 @@ launchctl kickstart -k gui/$(id -u)/com.user.smart_renamer
 | `Bootstrap failed: 5: Input/output error` | 既に登録済み。`bootout` してから `bootstrap` する |
 | ファイル名が全て `0001_Capture.png` になる | `.env` の `GEMINI_API_KEY` を確認。未設定なら起動時に `app.log` にエラーが出る |
 | ポップアップが出ない | `app.log` / `app_error.log` を確認 |
-| 右クリックに出てこない | `killall Finder`、それでも駄目ならシステム設定の「機能拡張」 |
+| 右クリックに出てこない | 「クイックアクション」ではなく「サービス」を見る。`killall Finder` |
+| 右クリックが `Operation not permitted` | `WorkflowServiceRunner.xpc` にフルディスクアクセスを許可（→ 3章） |
 
 
 ## 📎 付録: 手動セットアップ
