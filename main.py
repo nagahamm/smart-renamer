@@ -135,13 +135,12 @@ def rename_manually(paths, config):
         print("対象になるファイルがありません（対応形式: png / jpg / jpeg / heic / pdf）")
         return
 
-    prompt_template = config['llm_rules']['prompt_template']
     total = len(targets)
     print(f"🗂 {total}件のファイルをリネームします")
 
     for index, filepath in enumerate(targets, start=1):
         print(f"\n[{index}/{total}] {filepath}")
-        candidates = build_candidates(filepath, prompt_template)
+        candidates = build_candidates(filepath, config)
 
         if not candidates:
             # 手動モードでは連番より、元の名前を出して直してもらう方が親切
@@ -230,13 +229,18 @@ def prefer_file_date(candidates, file_date, today):
     return result
 
 
-def build_candidates(filepath, prompt_template):
+def build_candidates(filepath, config):
     """OCR/テキスト抽出からファイル名候補までをまとめる。監視・手動の共通処理。"""
     print("🔍 テキストを抽出中...")
     text = extract_text(filepath)
 
     print("🧠 LLMへファイル名候補をリクエスト中...")
-    candidates = get_filename_candidates(text, prompt_template)
+    candidates = get_filename_candidates(
+        text,
+        config['llm_rules']['prompt_template'],
+        config['llm']['model'],
+        config['llm']['timeout_seconds'],
+    )
     if not candidates:
         return candidates
 
@@ -254,11 +258,10 @@ def process_screenshot(filepath, config):
 
     save_dir = os.path.expanduser(config['directories']['save_dir'])
     timeout = config['ui']['timeout_seconds']
-    prompt_template = config['llm_rules']['prompt_template']
 
     os.makedirs(save_dir, exist_ok=True)
 
-    candidates = build_candidates(filepath, prompt_template)
+    candidates = build_candidates(filepath, config)
 
     if not candidates:
         final_name = get_next_sequence_name(save_dir)
