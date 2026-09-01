@@ -17,28 +17,185 @@ PyQt6によるポップアップUIからキーボード（`↑`/`↓`/`Enter`）
 - **手動リネーム**: `--rename` で任意のファイル・フォルダをその場でリネーム。Finderの右クリックからも実行可能。候補の選択に加えて**自分で名前を書き換えられる**。`pdf` / `jpg` / `heic` にも対応。
 
 
-## 🚀 1. 仮想環境の作成と有効化
+## 🚀 1. セットアップ
 
-システム環境を汚さないために、Pythonの仮想環境（`.venv`）を作成して実行します。ターミナルを開き、以下のコマンドを順番に実行してください。
+macOS専用です（Vision framework / PyObjC / PyQt6 に依存）。
+
+**設置場所は `~/Documents` / `~/Desktop` / `~/Downloads` の外にしてください。** この3つはmacOSの保護対象（TCC）で、Finderの右クリックからリネームを実行するプロセスが読み取れず失敗します。ホーム直下（`~/smart-renamer` など）が無難です。常駐だけなら保護対象でも動きますが、右クリックが使えません。
+
+事前に [Google AI Studio](https://aistudio.google.com/apikey) でGemini APIキー（`AIza...` から始まる文字列）を取得しておいてください。
 
 ```bash
-# プロジェクトのディレクトリに移動
-cd ~/Documents/smart-renamer
-
-# 仮想環境（.venv）を作成
-python3 -m venv .venv
-
-# 仮想環境を有効化（ターミナルの先頭に (.venv) と表示されれば成功です）
-source .venv/bin/activate
+cd ~/smart-renamer
+./setup.sh
 ```
-※以降の作業は、必ずこの仮想環境が有効化された状態で行ってください。
 
-## 📦 2. 必要なパッケージのインストール
+途中でAPIキーの入力を求められます。貼り付けて `Enter` を押すと `.env` に保存されます。
 
-仮想環境を有効にした状態で、本ツールの動作に必要な外部ライブラリをインストールします。
+`setup.sh` は以下を全て行います。
+
+| やること | 内容 |
+| --- | --- |
+| 仮想環境 | `.venv` の作成と `requirements.txt` のインストール |
+| APIキー | `.env` の作成（既にキーがあれば触りません） |
+| 常駐登録 | `.plist` を生成して `launchd` に登録。ログイン時に自動で動きます |
+| 右クリック | Finderの「サービス」に `Rename with Gemini` を登録 |
+
+パスは全てスクリプトが埋めるため、プロジェクトをどこに置いても構いません。
+
+**何度実行しても安全です。** `config.yaml` の `watch_dir` を変えた後や、プロジェクトを別の場所へ移動した後は、`./setup.sh` を再実行すれば設定が追従します。
+
+※ 監視するフォルダや保存先、命名規則を変えたい場合は `config.yaml` を編集してください。
+
+
+## 💡 2. 使い方 (Usage)
+
+セットアップが済んでいれば常駐は既に動いています。何もせずスクショを撮るだけです。
+
+### 実行の流れ
+
+1. **スクショ撮影**: Macの標準機能（`Cmd + Shift + 3` または `4`）でスクリーンショットを撮影します。
+2. **自動検知とAI処理**: プログラムが画像を検知し、GeminiにOCRとファイル名の生成をリクエストします。
+3. **ポップアップ確認**: 画面にリネーム候補のポップアップが表示されます。
+4. **保存**: 最適な候補をクリック（またはタイムアウト）すると、`config.yaml` で指定したフォルダ（デフォルトは `~/Documents/Screenshots`）に自動でリネームされて移動します。
+
+### 手動で起動する
+
+常駐させず、ターミナルで動きを見ながら試したい場合。
 
 ```bash
-pip install watchdog google-genai pyyaml python-dotenv PyQt6 pyobjc-framework-Cocoa pyobjc-framework-Quartz pyobjc-framework-Vision
+.venv/bin/python main.py
+```
+
+```text
+👀 監視を開始しました: /Users/you/Desktop
+終了する場合は Ctrl+C を押してください。
+```
+
+終了は `Ctrl + C` です。
+
+### 既存ファイルを手動でリネームする
+
+他のフォルダにあるファイルや、一度リネームしたファイルを付け直したい場合は `--rename` を使います。
+
+```bash
+.venv/bin/python main.py --rename ~/Documents/Screenshots/2026-08-18__SBI__口座管理_Capture.png
+.venv/bin/python main.py --rename ~/Downloads          # フォルダ直下のファイルをまとめて
+```
+
+- 対応形式は `png` / `jpg` / `jpeg` / `heic` / `pdf`
+- **その場でリネームします。** 監視モードと違い `save_dir` へは移動しません
+- フォルダを渡した場合、**直下のファイルのみ**が対象です（サブフォルダは見ません）
+- タイムアウトはありません。候補を選ぶか、**編集欄で自分で書き換えて** `Enter` で確定します
+- 複数件のときは `3 / 50` の進捗が出ます。`Esc` でその1件をスキップ、「すべて中止」で残り全部を中止
+
+
+## 🖱 3. Finderの右クリックからリネームする
+
+`setup.sh` が Automator のサービスを `~/Library/Services/Rename with Gemini.workflow` に作成済みです。Finderでファイルやフォルダを選んで **右クリック →「サービス」→「Rename with Gemini」** で実行できます。
+
+### メニューのどこに出るか
+
+macOS の右クリックメニューには「クイックアクション」と「サービス」の2つのサブメニューがあり、**登録方法によって出る場所が変わります。**
+
+| 登録方法 | 出る場所 | 並び順 | 自動登録 |
+| --- | --- | --- | --- |
+| Automator（`setup.sh`） | 「サービス」 | 名前順で固定 | できる |
+| ショートカット.app | 「クイックアクション」 | 変えられる | できない（GUI操作が必要） |
+
+「クイックアクション」は「サービス」より上に表示され、**システム設定 → 一般 → ログイン項目と機能拡張 → Finder** で並び順を変えられます。一番上に置きたい場合はショートカット.app で登録してください。
+
+Automator のサービスは `setup.sh` から自動生成できる代わりに、「サービス」サブメニュー内の名前順に固定されます。
+
+### メニューに出てこない場合
+
+- Finderを再起動する（`killall Finder`）
+- **システム設定 → 一般 → ログイン項目と機能拡張**（macOSのバージョンによっては「プライバシーとセキュリティ → 機能拡張」）で、`Rename with Gemini` にチェックが入っているか確認する
+
+### `Operation not permitted` で失敗する場合
+
+```
+PermissionError: [Errno 1] Operation not permitted: '/Users/you/Documents/smart-renamer/.venv/pyvenv.cfg'
+```
+
+プロジェクトを `~/Documents` / `~/Desktop` / `~/Downloads` に置いている場合に出ます。サービスを実行する `WorkflowServiceRunner` がこれらのフォルダを読めないためです。
+
+**プロジェクトを保護対象外の場所へ移してください。**
+
+```bash
+launchctl bootout gui/$(id -u)/com.user.smart_renamer
+mv ~/Documents/smart-renamer ~/smart-renamer
+~/smart-renamer/setup.sh
+```
+
+`setup.sh` が新しいパスで plist と サービス を貼り直します。
+
+権限を与えて解決しようとしても回避できません。`WorkflowServiceRunner.xpc` はフルディスクアクセスの選択ダイアログで選べず、`osascript` の `do shell script` を挟んでも TCC の帰属は変わりませんでした（macOS 26 で確認）。
+
+### ショートカット.app で登録する場合
+
+「クイックアクション」に出したい場合、または並び順を変えたい場合はこちらです。`setup.sh` が作ったサービスは `rm -rf ~/Library/Services/"Rename with Gemini.workflow"` で削除できます。
+
+1. **ショートカット.app** を開き、新規ショートカットを作成
+2. 「クイックアクション」として登録し、**受け取る項目を「ファイルとフォルダ」**、**「Finder」から使用可能** に設定
+
+   ※ この設定項目の名前・場所はmacOSのバージョンによって変わる。上記はおおよその目安として、実際の画面の文言に従うこと
+3. アクション「**シェルスクリプトを実行**」を追加し、以下を設定
+   - 入力の引き渡し方法: **引数として**
+   - シェルスクリプト（`/path/to/smart-renamer` は実際にこのプロジェクトを置いた場所に置き換える）:
+
+```bash
+/path/to/smart-renamer/.venv/bin/python /path/to/smart-renamer/main.py --rename "$@"
+```
+
+4. ショートカットに名前を付けて保存（例: `Rename with Gemini`）
+
+   この名前がFinderの右クリックメニューにそのまま表示されます。
+5. **システム設定 → 一般 → ログイン項目と機能拡張 → Finder** で並び順を一番上にする
+
+
+## ⚙️ 4. 常駐の管理 (launchd)
+
+`setup.sh` が `~/Library/LaunchAgents/com.user.smart_renamer.plist` を登録済みです。
+
+```bash
+# 動作確認
+launchctl print gui/$(id -u)/com.user.smart_renamer
+
+# ログ確認
+cat app.log
+cat app_error.log
+
+# 停止
+launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
+
+# 再起動（plistを変えていない場合）
+launchctl kickstart -k gui/$(id -u)/com.user.smart_renamer
+```
+
+`plist` を作り直したい場合は `./setup.sh` を再実行してください（`bootout` してから登録し直します）。
+
+### うまく動かないとき
+
+| 症状 | 確認すること |
+| --- | --- |
+| `Bootstrap failed: 5: Input/output error` | 既に登録済み。`bootout` してから `bootstrap` する |
+| ファイル名が全て `0001_Capture.png` になる | `.env` の `GEMINI_API_KEY` を確認。未設定なら起動時に `app.log` にエラーが出る |
+| ポップアップが出ない | `app.log` / `app_error.log` を確認 |
+| 右クリックに出てこない | 「クイックアクション」ではなく「サービス」を見る。`killall Finder` |
+| 右クリックが `Operation not permitted` | プロジェクトが `~/Documents` などの保護対象にある。外へ移す（→ 3章） |
+
+
+## 📎 付録: 手動セットアップ
+
+`setup.sh` を使わず自分で組み立てる場合の手順です。
+
+### A-1. 仮想環境と依存パッケージ
+
+```bash
+cd ~/smart-renamer
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 **【インストールされる主なパッケージ】**
@@ -50,100 +207,23 @@ pip install watchdog google-genai pyyaml python-dotenv PyQt6 pyobjc-framework-Co
 - `python-dotenv`: `.env` ファイルからのAPIキー読み込み
 - `pyobjc-framework-*`: Vision framework によるOCR（Cocoa / Quartz / Vision）
 
+### A-2. APIキー
 
-## 🔐 3. APIキーの設定 (Configuration)
-
-セキュリティを確保するため、APIキーはGitの管理対象外である `.env` ファイルに保存します。
-
-1. プロジェクトのルートディレクトリ（`~/Documents/smart-renamer`）に `.env` という名前のファイルを作成します。
-2. 取得したGoogle Gemini APIキーを以下のように記述して保存してください。
+APIキーはGitの管理対象外である `.env` に保存します。プロジェクトのルートに作成してください。
 
 ```env
 # .env (このファイルはGitにはプッシュされません)
 GEMINI_API_KEY=ここにあなたのAPIキー(AIza...から始まる文字列)を貼り付けてください
 ```
 
-※監視するフォルダや保存先、細かい命名規則の設定を変更したい場合は、同階層にある `config.yaml` を編集してください。
+未設定のまま起動するとエラーを出して終了します。
 
-## 💡 4. 使い方 (Usage)
-
-準備が完了したら、ツールを起動して実際にスクリーンショットを処理します。
-
-### ツールの起動
-ターミナルで仮想環境を有効にした状態（`.venv`）で、以下のコマンドを実行します。
-
-```bash
-python main.py
-```
-
-ターミナルに以下のように表示されれば、正常に起動し、監視がスタートしています。
-```text
-👀 監視を開始しました: ~/Desktop
-終了する場合は Ctrl+C を押してください。
-```
-
-### 実行の流れ
-1. **スクショ撮影**: Macの標準機能（`Cmd + Shift + 3` または `4`）でスクリーンショットを撮影します。
-2. **自動検知とAI処理**: プログラムが画像を検知し、GeminiにOCRとファイル名の生成をリクエストします。
-3. **ポップアップ確認**: 画面にリネーム候補のポップアップが表示されます。
-4. **保存**: 最適な候補をクリック（またはタイムアウト）すると、`config.yaml` で指定したフォルダ（デフォルトは `~/Documents/Screenshots`）に自動でリネームされて移動します。
-
-ツールの実行を終了したい場合は、ターミナル上で `Ctrl + C` を押してください。
-
-### 既存ファイルを手動でリネームする
-
-他のフォルダにあるファイルや、一度リネームしたファイルを付け直したい場合は `--rename` を使います。
-
-```bash
-python main.py --rename ~/Documents/Screenshots/2026-08-18__SBI__口座管理_Capture.png
-python main.py --rename ~/Downloads          # フォルダ直下のファイルをまとめて
-```
-
-- 対応形式は `png` / `jpg` / `jpeg` / `heic` / `pdf`
-- **その場でリネームします。** 監視モードと違い `save_dir` へは移動しません
-- フォルダを渡した場合、**直下のファイルのみ**が対象です（サブフォルダは見ません）
-- タイムアウトはありません。候補を選ぶか、**編集欄で自分で書き換えて** `Enter` で確定します
-- 複数件のときは `3 / 50` の進捗が出ます。`Esc` でその1件をスキップ、「すべて中止」で残り全部を中止
-
-## 🖱 5. Finderの右クリックからリネームする（Quick Action）
-
-`--rename` をFinderの右クリックメニューに登録すると、ファイルを選んで即リネームできます。
-
-1. **ショートカット.app** を開き、新規ショートカットを作成
-2. 「クイックアクション」として登録し、**受け取る項目を「ファイルとフォルダ」**、**「Finder」から使用可能** に設定
-
-   ※ この設定項目の名前・場所はmacOSのバージョンによって変わる。上記はおおよその目安として、実際の画面の文言に従うこと
-3. アクション「**シェルスクリプトを実行**」を追加し、以下を設定
-   - 入力の引き渡し方法: **引数として**
-   - シェルスクリプト（`/path/to/smart-renamer` は実際にこのプロジェクトを置いた場所に置き換える）:
-
-```bash
-cd /path/to/smart-renamer
-.venv/bin/python main.py --rename "$@"
-```
-
-4. ショートカットに名前を付けて保存（例: `Rename with Gemini`）
-
-   この名前がFinderの右クリックメニューにそのまま表示されます。
-
-5. ショートカットを保存しても右クリックメニューに出てこない場合、**システム設定 → 一般 → 機能拡張**（またはmacOSのバージョンによっては「プライバシーとセキュリティ → 機能拡張」）にある **Finder関連の拡張機能一覧** を開き、作成したショートカットにチェックが入っているか確認する
-
-   ※ この項目はGUI操作の自動化・実機確認ができていない。見つからない場合はmacOSのバージョンに応じて「機能拡張」を検索するか、システム設定内を確認すること。
-
-Finderでファイルやフォルダを選んで右クリック →「クイックアクション」から実行できます。メニューに出てこない場合は、Finderを再起動（`Option`キーを押しながらDockのFinderアイコンを右クリック → 「終了」、または `killall Finder`）してみてください。
-
-※ Desktop / Documents / Downloads 配下のファイルを操作するには、実行するPythonに**フルディスクアクセス**の許可が必要になる場合があります（システム設定 → プライバシーとセキュリティ → フルディスクアクセス）。
-
-## ⚙️ 6. macOS ログイン時自動常駐化 (launchd)
-
-手動起動せず、Mac起動時にバックグラウンドで完全自動実行させる設定です。
-
-### 6-1. launchd 用設定ファイル (.plist) の作成
+### A-3. launchd 用設定ファイル (.plist)
 
 ```bash
 cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
 <?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "[http://www.apple.com/DTDs/PropertyList-1.0.dtd](http://www.apple.com/DTDs/PropertyList-1.0.dtd)">
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
@@ -153,20 +233,14 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
     <array>
         <string>/usr/bin/osascript</string>
         <string>-e</string>
-        <string>do shell script "cd /path/to/smart-renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
+        <string>do shell script "cd /path/to/smart-renamer &amp;&amp; .venv/bin/python -u main.py &gt; app.log 2&gt; app_error.log"</string>
     </array>
 
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- 異常終了時のみ再起動する。アイドルタイムアウトによる正常終了では再起動しない -->
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-
-    <!-- 監視ディレクトリに変更があった時（＝スクショ撮影時）に launchd が再起動する -->
+    <!-- 監視ディレクトリに変更があった時（＝スクショ撮影時）に launchd が起動する。
+         起動に失敗した場合も、次のスクショまで再試行しない -->
     <key>WatchPaths</key>
     <array>
         <string>/Users/your-username/Desktop</string>
@@ -181,27 +255,19 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
 PLIST_EOF
 ```
 
+※ `/path/to/smart-renamer` は実際にこのプロジェクトを置いた場所に置き換えてください。
+
+※ `&amp;&amp;` と `&gt;` はXMLのエスケープです。`&&` `>` に書き戻すとXMLとして不正になり、`launchctl` が読み込めません。作成後に `plutil -lint ~/Library/LaunchAgents/com.user.smart_renamer.plist` で確認してください。
+
 ※ `WatchPaths` のパスは `config.yaml` の `watch_dir` と一致させてください（`~` は展開されないため絶対パスで記述します）。
 
-### 6-2. 権限設定と常駐登録
+※ `python -u` は必須です。付けないと標準出力がバッファリングされ、常駐している間 `app.log` がほぼ空のままになり、障害が追えなくなります。
+
+※ `KeepAlive` は使いません。`config.yaml` や `.env` の設定ミスで起動時に終了した場合、10秒おきに再起動を繰り返してしまうためです。異常終了しても次のスクショ撮影時に `WatchPaths` で起動し直されます。
+
+### A-4. 常駐登録
+
 ```bash
-# フォルダ権限の許可
 chmod 755 ~/Library/LaunchAgents
-
-# ユーザーセッションへ登録・起動
 launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
 ```
-
-### 6-3. 管理用コマンド
-動作確認: `launchctl list | grep smart_renamer` または `ps aux | grep main.py`
-
-サービス停止: `launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist`
-
-再読み込み:
-
-```bash
-launchctl bootout gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.user.smart_renamer.plist
-```
-
-ログ確認: `cat app_error.log`
