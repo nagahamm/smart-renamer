@@ -1,13 +1,10 @@
-import os
-# Tkinterの非推奨警告（DeprecationWarning）を非表示にする設定
-os.environ["TK_SILENCE_DEPRECATION"] = "1"
-
 import argparse
-import time
-import shutil
-import yaml
+import os
 import queue
 import re
+import shutil
+import time
+import yaml
 from datetime import datetime
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
@@ -269,7 +266,6 @@ def process_screenshot(filepath, config):
     else:
         print(f"✨ 取得した候補: {candidates}")
         print("🖥️ UIを表示します...")
-        # 単一のTkウィンドウとしてダイアログを起動
         final_name, _ = show_rename_dialog(
             candidates, filepath, timeout_seconds=timeout, dest_dir=save_dir
         )
