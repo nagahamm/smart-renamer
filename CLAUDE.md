@@ -15,7 +15,7 @@ macOSで撮影したスクリーンショットを `watchdog` で検知し、Vis
 | `config.yaml` | 全ての設定値と命名規則プロンプト |
 | `setup.sh` | 仮想環境・`.env`・launchd常駐・Finderの右クリック登録のセットアップ |
 | `requirements.txt` | 依存パッケージ。READMEと二重管理しない |
-| `docs/` | READMEに貼るダイアログの画像 |
+| `docs/` | READMEに貼るダイアログの画像と、その生成スクリプト（`render.py`） |
 
 **設定値をコードにハードコードしないこと。** 監視先・保存先・タイムアウト・モデル名・命名規則は全て `config.yaml` に集約する。
 
