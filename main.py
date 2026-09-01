@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from ocr_engine import extract_text, is_supported
-from llm_client import get_filename_candidates
+from llm_client import API_KEY_ENV, get_api_key, get_filename_candidates
 from popup_ui import run_event_loop, show_rename_dialog, stop_event_loop
 
 file_queue = queue.Queue()
@@ -254,6 +254,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     config = load_config()
+
+    # キーが無いと候補が取れず、全ファイルが無言で連番になる。
+    # API障害による連番フォールバックとは違い設定ミスは直らないので、起動時に弾く
+    if not get_api_key():
+        print(f"エラー: {API_KEY_ENV} が設定されていません。")
+        print(".env に GEMINI_API_KEY=<キー> を記述してください。")
+        exit(1)
 
     # 手動モード: 常駐せず、渡されたファイルを処理して終了する
     if args.rename:

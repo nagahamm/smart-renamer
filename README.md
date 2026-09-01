@@ -159,14 +159,8 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
     <key>RunAtLoad</key>
     <true/>
 
-    <!-- 異常終了時のみ再起動する。アイドルタイムアウトによる正常終了では再起動しない -->
-    <key>KeepAlive</key>
-    <dict>
-        <key>SuccessfulExit</key>
-        <false/>
-    </dict>
-
-    <!-- 監視ディレクトリに変更があった時（＝スクショ撮影時）に launchd が再起動する -->
+    <!-- 監視ディレクトリに変更があった時（＝スクショ撮影時）に launchd が起動する。
+         起動に失敗した場合も、次のスクショまで再試行しない -->
     <key>WatchPaths</key>
     <array>
         <string>/Users/your-username/Desktop</string>
@@ -184,6 +178,8 @@ PLIST_EOF
 ※ `WatchPaths` のパスは `config.yaml` の `watch_dir` と一致させてください（`~` は展開されないため絶対パスで記述します）。
 
 ※ `python -u` は必須です。付けないと標準出力がバッファリングされ、常駐している間 `app.log` がほぼ空のままになり、障害が追えなくなります。
+
+※ `KeepAlive` は使いません。`config.yaml` や `.env` の設定ミスで起動時に終了した場合、10秒おきに再起動を繰り返してしまうためです。異常終了しても次のスクショ撮影時に `WatchPaths` で起動し直されます。
 
 ### 6-2. 権限設定と常駐登録
 ```bash

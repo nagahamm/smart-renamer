@@ -15,13 +15,19 @@ MODEL_NAME = config.get("llm", {}).get("model", "gemini-3.1-flash-lite")
 # APIが詰まって無期限にブロックし続けるのを防ぐためのタイムアウト（秒）
 TIMEOUT_SECONDS = config.get("llm", {}).get("timeout_seconds", 15)
 
+API_KEY_ENV = "GEMINI_API_KEY"
+
+
+# APIキーを環境変数から取得する。未設定なら None を返す
+def get_api_key():
+    return os.environ.get(API_KEY_ENV)
+
 # Gemini APIを呼び出してファイル名の候補を取得する
 def get_filename_candidates(ocr_text: str, prompt_template: str) -> list:
     today_str = datetime.now().strftime("%Y-%m-%d")
     
-    # 環境変数からAPIキーを取得
-    api_key = os.environ.get("GEMINI_API_KEY")
-    
+    api_key = get_api_key()
+
     if not api_key:
         print("エラー: APIキーが設定されていません。(.envファイルを確認してください)")
         return None
