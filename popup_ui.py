@@ -7,20 +7,92 @@ from AppKit import (
     NSApplicationActivationPolicyRegular,
 )
 from PyQt6.QtWidgets import (
-    QApplication, QDialog, QVBoxLayout, QLabel,
-    QHBoxLayout, QFrame, QLineEdit, QWidget
+    QApplication, QDialog, QVBoxLayout, QLabel, QPushButton, QSizePolicy,
+    QHBoxLayout, QFrame, QLineEdit, QWidget, QGraphicsDropShadowEffect, QStyle
 )
-from PyQt6.QtCore import QEvent, QSize, QTimer, Qt
-from PyQt6.QtGui import QFont, QFontMetrics, QPixmap
+from PyQt6.QtCore import QEvent, QRectF, QSize, QTimer, Qt
+from PyQt6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPalette, QPen, QPixmap
 
 from ocr_engine import render_pdf_preview
 
 # ウィンドウの基準サイズ。実際の幅・高さは常にプレビュー画像の縦横比から決め直す
-# （Preview.appのように、開くたびに画像に合わせて余白なく収める）。
+# （Preview.appのように、開くたびに画像に合わせて収める）。
 # 画像が無い場合のみこの値を使う。画面が小さい場合は SCREEN_RATIO まで縮める
-DEFAULT_WIDTH = 1280
-DEFAULT_HEIGHT = 760
+DEFAULT_WIDTH = 1160
+DEFAULT_HEIGHT = 720
 SCREEN_RATIO = 0.9
+
+# ページ（プレビュー）の周囲に空ける余白。Preview.app と同じく、
+# 画像はキャンバスの地の上に浮かぶ一枚の紙として見せる
+CANVAS_PADDING = 28
+
+# タイトルバーの下から降りてくるシートの幅
+SHEET_WIDTH = 600
+# シートに隠れてプレビューが見えなくならないための最低の高さ
+MIN_CANVAS_HEIGHT = 460
+
+# macOS のシステムカラー。ライト／ダークで入れ替えるのはこの表だけで、
+# ウィンドウの組み立て方は共通にする
+LIGHT_THEME = {
+    "canvas": "#D5D5D8",
+    "sheet": "#F4F4F4",
+    "page": "#FFFFFF",
+    "label": "rgba(0, 0, 0, 217)",
+    "label2": "rgba(0, 0, 0, 128)",
+    "label3": "rgba(0, 0, 0, 77)",
+    "sep": "rgba(0, 0, 0, 28)",
+    "accent": "#007AFF",
+    "control": "#FFFFFF",
+    "control_border": "rgba(0, 0, 0, 41)",
+    "field": "#FFFFFF",
+    "field_border": "rgba(0, 0, 0, 51)",
+    "dim": "rgba(0, 0, 0, 46)",
+    "page_shadow_alpha": 56,
+}
+
+DARK_THEME = {
+    "canvas": "#171719",
+    "sheet": "#3A3A3D",
+    "page": "#FFFFFF",
+    "label": "rgba(255, 255, 255, 219)",
+    "label2": "rgba(255, 255, 255, 140)",
+    "label3": "rgba(255, 255, 255, 82)",
+    "sep": "rgba(255, 255, 255, 31)",
+    "accent": "#0A84FF",
+    "control": "#5B5B60",
+    "control_border": "rgba(0, 0, 0, 102)",
+    "field": "#1D1D1F",
+    "field_border": "rgba(255, 255, 255, 41)",
+    "dim": "rgba(0, 0, 0, 115)",
+    "page_shadow_alpha": 130,
+}
+
+
+def current_theme():
+    """システムのライト／ダーク設定に合わせた配色を返す。"""
+    app = QApplication.instance()
+    if app is None:
+        return LIGHT_THEME
+
+    # macOS では QPalette がシステムの外観に追従するため、地の色の明るさで判定できる
+    background = app.palette().color(QPalette.ColorRole.Window)
+    return DARK_THEME if background.lightnessF() < 0.5 else LIGHT_THEME
+
+
+def ui_font(point_size, weight=QFont.Weight.Normal):
+    """macOSのシステムUIフォント。家族名を指定するとSF Proに解決できず別書体になる。"""
+    font = QFont()
+    font.setPointSize(point_size)
+    font.setWeight(weight)
+    return font
+
+
+def mono_font(point_size):
+    """ファイル名用の等幅フォント。SF Monoが無い環境ではMenloに落とす。"""
+    font = QFont()
+    font.setFamilies(["SF Mono", "Menlo"])
+    font.setPointSize(point_size)
+    return font
 
 
 def sanitize_filename(name):
@@ -35,23 +107,37 @@ def sanitize_filename(name):
     return cleaned or None
 
 
-class PreviewPane(QLabel):
-    """対象ファイルの中身を表示する。枠のサイズは変えず、中身をアスペクト比維持で収める。"""
+def _format_size(num_bytes):
+    for unit in ("B", "KB", "MB", "GB"):
+        if num_bytes < 1024 or unit == "GB":
+            return f"{num_bytes:.0f} {unit}" if unit == "B" else f"{num_bytes:.1f} {unit}"
+        num_bytes /= 1024
 
-    def __init__(self, filepath):
+
+class PreviewPane(QLabel):
+    """対象ファイルの中身を一枚の紙として表示する。枠は常に画像と同じ縦横比になる。"""
+
+    def __init__(self, filepath, theme):
         super().__init__()
         self.filepath = filepath
         self.source = self._load(filepath)
 
         self.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.setMinimumHeight(160)
-        # 黒背景・枠を置くと、画像とウィンドウの比率が違うときに黒帯として目立つ。
-        # 背景を敷かず、余った部分はダイアログの地の色に馴染ませる。
-        self.setStyleSheet("background: transparent; border: none;")
+        self.setStyleSheet(f"background-color: {theme['page']}; border: none;")
+
+        # キャンバスの地から浮かせるための影。Preview.app のページと同じ見え方にする
+        shadow = QGraphicsDropShadowEffect(self)
+        shadow.setBlurRadius(24)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, theme["page_shadow_alpha"]))
+        self.setGraphicsEffect(shadow)
 
         if self.source is None:
             # プレビューが出せなくてもリネーム操作は続行できるようにする
-            self.setFont(QFont("SF Pro Text", 11))
+            self.setFont(ui_font(11))
+            self.setStyleSheet(
+                f"background-color: {theme['page']}; border: none; color: rgba(0, 0, 0, 128);"
+            )
             name = os.path.basename(filepath) if filepath else ""
             self.setText("\n".join(filter(None, ["プレビューを表示できません", name])))
 
@@ -102,55 +188,91 @@ class PreviewPane(QLabel):
             return None
         return self.source.width() / self.source.height()
 
+    def source_size_text(self):
+        """「2,880 × 1,800」形式の画素数。プレビューが無ければ None。"""
+        if self.source is None:
+            return None
+        return f"{self.source.width():,} × {self.source.height():,}"
+
     def resizeEvent(self, event):
         self._rescale()
         super().resizeEvent(event)
 
 
-class CandidateCard(QFrame):
-    """テキストが100%垂直中央に揃うカード型選択肢"""
-    def __init__(self, cand, parent_dialog):
+class CountdownRing(QWidget):
+    """残り時間を表す円形インジケータ。"""
+
+    def __init__(self, theme):
+        super().__init__()
+        self.accent = QColor(theme["accent"])
+        self.fraction = 1.0
+        self.setFixedSize(14, 14)
+
+    def set_fraction(self, fraction):
+        self.fraction = max(0.0, min(1.0, fraction))
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rect = QRectF(1.0, 1.0, 12.0, 12.0)
+
+        track = QColor(self.accent)
+        track.setAlpha(60)
+        painter.setPen(QPen(track, 1.6))
+        painter.drawEllipse(rect)
+
+        pen = QPen(self.accent, 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        # 12時から時計回りに減らす。Qtの角度は1/16度単位
+        painter.drawArc(rect, 90 * 16, -int(360 * 16 * self.fraction))
+
+
+class CandidateRow(QFrame):
+    """シート内のリストに並ぶ候補1件。"""
+
+    def __init__(self, index, cand, parent_dialog, theme):
         super().__init__()
         self.cand = cand
         self.parent_dialog = parent_dialog
+        self.theme = theme
 
-        self.setFixedHeight(46)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        # 選択状態は current_index で管理する。カードにフォーカスを持たせると
-        # Tab がカード間の移動に使われ、編集欄へ移せなくなる
+        # 選択状態は current_index で管理する。行にフォーカスを持たせると
+        # Tab が行間の移動に使われ、編集欄へ移せなくなる
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(12, 0, 12, 0)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
 
-        self.label = QLabel()
-        self.label.setFont(QFont("SF Mono", 10))
-        # 確実に左寄せ＆垂直中央揃え
-        self.label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.rank = QLabel(f"第{index + 1}候補")
+        self.rank.setFont(ui_font(10, QFont.Weight.DemiBold))
+        layout.addWidget(self.rank)
+
+        self.label = QLabel(cand)
+        self.label.setFont(mono_font(11))
+        self.label.setWordWrap(True)
         layout.addWidget(self.label)
 
-        self._update_elided_text()
+    def set_selected(self, selected):
+        background = self.theme["accent"] if selected else "transparent"
+        rank_color = "rgba(255, 255, 255, 184)" if selected else self.theme["label3"]
+        name_color = "#FFFFFF" if selected else self.theme["label"]
 
-    def _update_elided_text(self):
-        """幅に合わせて省略位置を計算し直す。ウィンドウを広げれば全体が見える。"""
-        metrics = QFontMetrics(self.label.font())
-        available = max(self.width() - 40, 0)
-        text = f" {metrics.elidedText(self.cand, Qt.TextElideMode.ElideLeft, available)}"
-        # 同じ文字列を再設定するとレイアウトが再帰的に走るため、変化時のみ更新する
-        if text != self.label.text():
-            self.label.setText(text)
-
-    def resizeEvent(self, event):
-        self._update_elided_text()
-        super().resizeEvent(event)
+        self.setStyleSheet(f"QFrame {{ background-color: {background}; border-radius: 6px; }}")
+        self.rank.setStyleSheet(f"color: {rank_color}; background: transparent;")
+        self.label.setStyleSheet(f"color: {name_color}; background: transparent;")
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self.parent_dialog.on_select(self.cand)
+            self.parent_dialog.select_candidate(self.parent_dialog.cards.index(self))
 
 
 class RenameDialog(QDialog):
-    def __init__(self, candidates, filepath=None, timeout_seconds=10, progress=None):
+    def __init__(self, candidates, filepath=None, timeout_seconds=10, progress=None,
+                 dest_dir=None):
         super().__init__()
         self.candidates = candidates
         self.filepath = filepath
@@ -159,22 +281,72 @@ class RenameDialog(QDialog):
         # 候補を選び始めたらカウントダウンをこの秒数に戻す
         self.timeout_seconds = timeout_seconds
         self.progress = progress
+        self.theme = current_theme()
         self.selected_name = None
         self.aborted = False
         self.editing = False
         self.cards = []
         self.current_index = 0
 
+        source_dir = os.path.dirname(filepath) if filepath else ""
+        self.dest_dir = dest_dir or source_dir
+        # 監視モードは別フォルダへ移すが、手動モードは同じ場所で名前だけ変える。
+        # 見出しとボタンの言葉をそれに合わせる
+        self.moving = os.path.normpath(self.dest_dir) != os.path.normpath(source_dir or ".")
+
         self.init_ui()
+
+    # --- 組み立て -------------------------------------------------
+
+    def init_ui(self):
+        # Preview.app と同じく、タイトルバーには開いているファイルの名前を出す
+        self.setWindowTitle(os.path.basename(self.filepath) if self.filepath else "Smart Renamer")
+        self.setStyleSheet(f"QDialog {{ background-color: {self.theme['canvas']}; }}")
+        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
+        self.setSizeGripEnabled(True)
+        # キー操作はダイアログ側で受ける
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+
+        # --- キャンバス（地）とページ（プレビュー） ---
+        # レイアウトに載せると固定サイズがウィンドウの下限になり、縮められなくなる
+        self.preview = PreviewPane(self.filepath, self.theme)
+        self.preview.setParent(self)
+
+        self.setMinimumWidth(SHEET_WIDTH + 80)
+        self.resize(self._initial_size(self.preview.aspect_ratio()))
+
+        # --- 背後を暗転させ、注意をシートへ集める ---
+        self.dim = QWidget(self)
+        self.dim.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.dim.setStyleSheet(f"background-color: {self.theme['dim']};")
+
+        self._build_sheet()
+        # シートで埋まってプレビューが見えなくなる大きさには縮められないようにする
+        self.setMinimumHeight(self.sheet.sizeHint().height() + 160)
+
+        # 最初はカーソルを立てず、候補を選べる状態にする。
+        # 編集したくなったら Tab か名前欄のクリックでカーソルが入る。
+        self.update_card_styles()
+        self.setFocus()
+        self._layout_children()
+
+        # タイマー
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_timer)
+        if self._has_timeout():
+            self.timer.start(1000)
 
     def _initial_size(self, aspect_ratio=None):
         """画像の縦横比からウィンドウの大きさを決める。
 
-        既定サイズを固定にすると画像との比率が合わず、上下または左右に帯ができる。
-        開くたびに画像の比率からウィンドウを決め直すことで、帯が出ないようにする。
+        ページの周囲の余白が上下左右で等しくなるよう、余白の分を足した大きさにする。
         """
         width = DEFAULT_WIDTH
         height = int(width / aspect_ratio) if aspect_ratio else DEFAULT_HEIGHT
+        height = max(height, MIN_CANVAS_HEIGHT)
+
+        width += CANVAS_PADDING * 2
+        height += CANVAS_PADDING * 2
 
         screen = QApplication.primaryScreen()
         if screen:
@@ -188,184 +360,325 @@ class RenameDialog(QDialog):
 
         return QSize(max(width, 1), max(height, 1))
 
-    def init_ui(self):
-        self.setWindowTitle("Smart Renamer")
-        self.setStyleSheet("background-color: #1E1E1E; color: #FFFFFF;")
-        self.setWindowFlags(Qt.WindowType.WindowStaysOnTopHint)
-        self.setSizeGripEnabled(True)
-        # キー操作はダイアログ側で受ける
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-
-        # --- プレビュー（全面） ---
-        # 画像を画面いっぱいに敷き、操作パネルはその上に重ねる
-        self.preview = PreviewPane(self.filepath)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.preview)
-
-        self.resize(self._initial_size(self.preview.aspect_ratio()))
-
-        self._build_overlay()
-
-        # 初期表示・フォーカス設定
-        # 最初はカーソルを立てず、候補を選べる状態にする。
-        # 編集したくなったら Tab か編集欄のクリックでカーソルが入る。
-        self.update_card_styles()
-        self.setFocus()
-        self._position_overlay()
-
-        # タイマー
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.update_timer)
-        if self._has_timeout():
-            self.timer.start(1000)
-
-    def _build_overlay(self):
-        """画像の上に重ねる操作パネル。レイアウトには載せず、自前で位置を決める。"""
-        self.overlay = QWidget(self)
-        self.overlay.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        self.overlay.setStyleSheet("""
-            QWidget#overlay {
-                background-color: rgba(24, 24, 26, 0.82);
-                border: 1px solid rgba(255, 255, 255, 0.10);
-                border-radius: 14px;
-            }
+    def _build_sheet(self):
+        """タイトルバーの下から降りてくるシート。レイアウトには載せず、自前で位置を決める。"""
+        self.sheet = QFrame(self)
+        self.sheet.setObjectName("sheet")
+        self.sheet.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        self.sheet.setStyleSheet(f"""
+            QFrame#sheet {{
+                background-color: {self.theme['sheet']};
+                border-bottom-left-radius: 10px;
+                border-bottom-right-radius: 10px;
+            }}
         """)
-        self.overlay.setObjectName("overlay")
 
-        layout = QVBoxLayout(self.overlay)
-        layout.setContentsMargins(18, 14, 18, 14)
-        layout.setSpacing(8)
+        layout = QVBoxLayout(self.sheet)
+        layout.setContentsMargins(22, 20, 22, 18)
+        layout.setSpacing(14)
 
-        # --- ヘッダー ---
-        header_layout = QHBoxLayout()
+        layout.addLayout(self._build_head())
+        layout.addLayout(self._build_name_row())
+        layout.addWidget(self._build_listbox())
+        layout.addLayout(self._build_location_row())
+        layout.addLayout(self._build_foot())
 
-        title_label = QLabel("ファイル名を選択")
-        title_label.setFont(QFont("SF Pro Text", 12, QFont.Weight.Bold))
-        title_label.setStyleSheet("background: transparent;")
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
+    def _build_head(self):
+        head = QHBoxLayout()
+        head.setSpacing(10)
+
+        titles = QVBoxLayout()
+        titles.setSpacing(3)
+
+        title = QLabel("この名前で保存" if self.moving else "この名前に変更")
+        title.setFont(ui_font(13, QFont.Weight.DemiBold))
+        title.setStyleSheet(f"color: {self.theme['label']}; background: transparent;")
+        titles.addWidget(title)
+
+        subtitle = QLabel(self._file_meta_text())
+        subtitle.setFont(ui_font(11))
+        subtitle.setStyleSheet(f"color: {self.theme['label2']}; background: transparent;")
+        titles.addWidget(subtitle)
+
+        head.addLayout(titles)
+        head.addStretch()
 
         if self.progress:
             # 複数ファイルを順に処理しているときの「3 / 50」表示
             done, total = self.progress
-            progress_label = QLabel(f"{done} / {total}")
-            progress_label.setFont(QFont("SF Pro Text", 11))
-            progress_label.setStyleSheet("color: #8E8E93; background: transparent;")
-            header_layout.addWidget(progress_label)
+            pill = QLabel(f"{done} / {total}")
+            pill.setFont(ui_font(11))
+            pill.setStyleSheet(f"""
+                color: {self.theme['label2']};
+                background-color: {self.theme['sep']};
+                border-radius: 10px;
+                padding: 3px 9px;
+            """)
+            head.addWidget(pill, alignment=Qt.AlignmentFlag.AlignTop)
 
-        layout.addLayout(header_layout)
+        return head
 
-        self.timer_label = QLabel()
-        self.timer_label.setFont(QFont("SF Pro Text", 10))
-        self.timer_label.setStyleSheet("color: #0A84FF; background: transparent;")
-        self.timer_label.setText(self._status_text())
-        layout.addWidget(self.timer_label)
+    def _file_meta_text(self):
+        """「PNG · 2,880 × 1,800 · 2.4 MB」形式の見出し補足。"""
+        if not self.filepath:
+            return ""
 
-        # --- 候補リスト ---
-        for cand in self.candidates:
-            card = CandidateCard(cand, self)
-            layout.addWidget(card)
-            self.cards.append(card)
+        extension = os.path.splitext(self.filepath)[1].lstrip(".").upper()
+        parts = [extension] if extension else []
 
-        # --- 編集欄 ---
+        size_text = self.preview.source_size_text()
+        if size_text:
+            parts.append(size_text)
+
+        try:
+            parts.append(_format_size(os.path.getsize(self.filepath)))
+        except OSError:
+            pass
+
+        return " · ".join(parts)
+
+    def _build_name_row(self):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(self._field_label("名前"))
+
         # 候補を選ぶとここに入る。Tab またはクリックでカーソルが入り、書き換えられる
         self.name_edit = QLineEdit()
-        self.name_edit.setFont(QFont("SF Mono", 11))
-        self.name_edit.setFixedHeight(36)
+        self.name_edit.setFont(mono_font(12))
+        self.name_edit.setFixedHeight(28)
         # Tabキーは自前で処理する。勝手にフォーカスが移らないようクリックのみ許可する
         self.name_edit.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
-        self.name_edit.setStyleSheet("""
-            QLineEdit {
-                background-color: rgba(60, 60, 64, 0.85);
-                border: 1px solid rgba(255, 255, 255, 0.12);
-                border-radius: 8px;
-                padding: 0 10px;
-                color: #FFFFFF;
-            }
-            QLineEdit:focus { border: 2px solid #0A84FF; }
+        self.name_edit.setStyleSheet(f"""
+            QLineEdit {{
+                background-color: {self.theme['field']};
+                border: 1px solid {self.theme['field_border']};
+                border-radius: 6px;
+                padding: 0 8px;
+                color: {self.theme['label']};
+            }}
+            QLineEdit:focus {{ border: 2px solid {self.theme['accent']}; }}
         """)
         self.name_edit.returnPressed.connect(self.confirm_edited_name)
-        # 編集欄にカーソルが入ったらタイマーを止めるため、フォーカスを監視する
+        # 名前欄にカーソルが入ったらタイマーを止めるため、フォーカスを監視する
         self.name_edit.installEventFilter(self)
         if self.candidates:
             self.name_edit.setText(self.candidates[0])
-        layout.addWidget(self.name_edit)
+        row.addWidget(self.name_edit)
 
-        # --- フッター ---
-        footer_layout = QHBoxLayout()
-        footer_layout.addStretch()
+        extension = os.path.splitext(self.filepath)[1] if self.filepath else ""
+        if extension:
+            ext_label = QLabel(extension)
+            ext_label.setFont(mono_font(12))
+            ext_label.setStyleSheet(f"color: {self.theme['label2']}; background: transparent;")
+            row.addWidget(ext_label)
+
+        return row
+
+    def _field_label(self, text):
+        label = QLabel(text)
+        label.setFont(ui_font(13))
+        label.setFixedWidth(40)
+        label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        label.setStyleSheet(f"color: {self.theme['label']}; background: transparent;")
+        return label
+
+    def _build_listbox(self):
+        box = QFrame()
+        box.setObjectName("listbox")
+        box.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        box.setStyleSheet(f"""
+            QFrame#listbox {{
+                background-color: {self.theme['field']};
+                border: 1px solid {self.theme['field_border']};
+                border-radius: 6px;
+            }}
+        """)
+        layout = QVBoxLayout(box)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        for index, cand in enumerate(self.candidates):
+            row = CandidateRow(index, cand, self, self.theme)
+            layout.addWidget(row)
+            self.cards.append(row)
+
+        wrapper = QWidget()
+        wrapper_layout = QHBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(50, 0, 0, 0)
+        wrapper_layout.addWidget(box)
+        return wrapper
+
+    def _build_location_row(self):
+        row = QHBoxLayout()
+        row.setSpacing(10)
+        row.addWidget(self._field_label("場所"))
+
+        popup = QFrame()
+        popup.setObjectName("popup")
+        popup.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        popup.setFixedHeight(28)
+        # 余った幅はパス表示に回す。伸ばすとフォルダ名が中央に浮いてしまう
+        popup.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
+        popup.setStyleSheet(f"""
+            QFrame#popup {{
+                background-color: {self.theme['control']};
+                border: 1px solid {self.theme['control_border']};
+                border-radius: 6px;
+            }}
+        """)
+        popup_layout = QHBoxLayout(popup)
+        popup_layout.setContentsMargins(8, 0, 10, 0)
+        popup_layout.setSpacing(7)
+
+        icon = QLabel()
+        icon.setPixmap(
+            self.style().standardIcon(QStyle.StandardPixmap.SP_DirIcon).pixmap(15, 15)
+        )
+        icon.setStyleSheet("background: transparent;")
+        popup_layout.addWidget(icon)
+
+        name = QLabel(os.path.basename(self.dest_dir.rstrip("/")) or "/")
+        name.setFont(ui_font(13))
+        name.setStyleSheet(f"color: {self.theme['label']}; background: transparent;")
+        popup_layout.addWidget(name)
+
+        row.addWidget(popup)
+
+        # 長いパスでもシートを押し広げないよう、余った幅に合わせて省略する
+        self.path_label = QLabel()
+        self.path_label.setFont(ui_font(11))
+        self.path_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.path_label.setStyleSheet(f"color: {self.theme['label3']}; background: transparent;")
+        self.path_label.setToolTip(self.dest_dir)
+        row.addWidget(self.path_label)
+
+        return row
+
+    def _update_path_label(self):
+        metrics = QFontMetrics(self.path_label.font())
+        elided = metrics.elidedText(
+            self._display_path(), Qt.TextElideMode.ElideMiddle, self.path_label.width()
+        )
+        if elided != self.path_label.text():
+            self.path_label.setText(elided)
+
+    def _display_path(self):
+        home = os.path.expanduser("~")
+        if self.dest_dir.startswith(home):
+            return "~" + self.dest_dir[len(home):]
+        return self.dest_dir
+
+    def _build_foot(self):
+        foot = QHBoxLayout()
+        foot.setSpacing(10)
+
+        self.ring = CountdownRing(self.theme)
+        self.ring.setVisible(self._has_timeout())
+        foot.addWidget(self.ring)
+
+        self.timer_label = QLabel(self._status_text())
+        self.timer_label.setFont(ui_font(11))
+        self.timer_label.setStyleSheet(f"color: {self.theme['label2']}; background: transparent;")
+        foot.addWidget(self.timer_label)
+        foot.addStretch()
 
         if self.progress:
-            abort_btn = QLabel("すべて中止")
-            abort_btn.setFont(QFont("SF Pro Text", 10))
-            abort_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-            abort_btn.setStyleSheet("color: #FF9F0A; margin-right: 16px; background: transparent;")
-            abort_btn.mousePressEvent = lambda e: self.on_abort()
-            footer_layout.addWidget(abort_btn)
+            abort_btn = self._button("すべて中止", kind="plain")
+            abort_btn.clicked.connect(self.on_abort)
+            foot.addWidget(abort_btn)
 
-        cancel_btn = QLabel("スキップ（変更しない）" if self.progress else "キャンセル（保存しない）")
-        cancel_btn.setFont(QFont("SF Pro Text", 10))
-        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        cancel_btn.setStyleSheet("color: #FF453A; background: transparent;")
-        cancel_btn.mousePressEvent = lambda e: self.on_select(None)
-        footer_layout.addWidget(cancel_btn)
+        cancel_btn = self._button("スキップ" if self.progress else "キャンセル")
+        cancel_btn.clicked.connect(lambda: self.on_select(None))
+        foot.addWidget(cancel_btn)
 
-        layout.addLayout(footer_layout)
+        confirm_btn = self._button("保存" if self.moving else "名前を変更", kind="default")
+        confirm_btn.clicked.connect(self.confirm_edited_name)
+        foot.addWidget(confirm_btn)
 
-    def _position_overlay(self):
-        """操作パネルをウィンドウ下部に配置する。"""
-        if not hasattr(self, "overlay"):
+        return foot
+
+    def _button(self, text, kind="normal"):
+        button = QPushButton(text)
+        button.setFont(ui_font(13))
+        button.setFixedHeight(28)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Return はダイアログ側で処理するため、ボタンに横取りさせない
+        button.setAutoDefault(False)
+        button.setDefault(False)
+        button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+
+        if kind == "default":
+            style = f"background-color: {self.theme['accent']}; border: none; color: #FFFFFF;"
+        elif kind == "plain":
+            style = f"background: transparent; border: none; color: {self.theme['label2']};"
+        else:
+            style = (
+                f"background-color: {self.theme['control']};"
+                f"border: 1px solid {self.theme['control_border']};"
+                f"color: {self.theme['label']};"
+            )
+
+        button.setStyleSheet(f"QPushButton {{ {style} border-radius: 6px; padding: 0 14px; }}")
+        return button
+
+    # --- 配置 -----------------------------------------------------
+
+    def _layout_children(self):
+        """暗転とシートをウィンドウに合わせて置き直す。"""
+        if not hasattr(self, "sheet"):
             return
-        margin = 20
-        width = max(self.width() - margin * 2, 200)
-        height = self.overlay.sizeHint().height()
-        self.overlay.setGeometry(margin, self.height() - height - margin, width, height)
-        self.overlay.raise_()
+
+        self._layout_page()
+
+        self.dim.setGeometry(0, 0, self.width(), self.height())
+        self.dim.raise_()
+
+        width = min(SHEET_WIDTH, max(self.width() - 80, 320))
+        height = self.sheet.sizeHint().height()
+        self.sheet.setGeometry((self.width() - width) // 2, 0, width, height)
+        self.sheet.raise_()
+        self._update_path_label()
+
+    def _layout_page(self):
+        """ページをキャンバスの縦横比に合わせて収める。余りはキャンバスの地になる。"""
+        available_width = max(self.width() - CANVAS_PADDING * 2, 1)
+        available_height = max(self.height() - CANVAS_PADDING * 2, 1)
+
+        ratio = self.preview.aspect_ratio()
+        if ratio is None:
+            width, height = available_width, available_height
+        else:
+            width = min(available_width, available_height * ratio)
+            height = width / ratio
+
+        width, height = max(int(width), 1), max(int(height), 1)
+        self.preview.setGeometry(
+            (self.width() - width) // 2, (self.height() - height) // 2, width, height
+        )
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self._position_overlay()
+        self._layout_children()
+
+    # --- 状態 -----------------------------------------------------
 
     def _has_timeout(self):
         return bool(self.time_left)
 
     def _status_text(self):
         if self.editing:
-            return "自動保存を止めました。Enter で確定します"
+            return "自動保存を停止中"
         if self._has_timeout():
-            return f"選択されない場合、{self.time_left}秒後に第1候補で自動保存します"
-        return "↑↓ で候補を選び、Tab で書き換え、Enter で確定します"
+            return f"{self.time_left} 秒後に第1候補で保存"
+        return "↑↓ 選択　tab 書き換え　return 確定"
 
     def update_card_styles(self):
-        """選択状態に合わせてカードとラベルのスタイルを一括変更"""
-        for i, card in enumerate(self.cards):
-            is_active = (i == self.current_index)
-            
-            border = (
-                "2px solid #0A84FF" if is_active
-                else "1px solid rgba(255, 255, 255, 0.12)"
-            )
-            background = (
-                "rgba(10, 132, 255, 0.22)" if is_active
-                else "rgba(70, 70, 74, 0.55)"
-            )
-            text_color = "#7FD3FF" if is_active else "#FFFFFF"
-
-            card.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {background};
-                    border: {border};
-                    border-radius: 8px;
-                }}
-                QFrame:hover {{
-                    background-color: rgba(100, 100, 105, 0.65);
-                }}
-            """)
-            card.label.setStyleSheet(f"color: {text_color}; border: none; background: transparent;")
+        """選択状態に合わせて候補行のスタイルを一括変更"""
+        for index, card in enumerate(self.cards):
+            card.set_selected(index == self.current_index)
 
     def select_candidate(self, index):
-        """候補を選び、編集欄の中身を差し替える。カーソルは立てない。"""
+        """候補を選び、名前欄の中身を差し替える。カーソルは立てない。"""
         if not (0 <= index < len(self.candidates)):
             return
         self.current_index = index
@@ -379,20 +692,26 @@ class RenameDialog(QDialog):
         if self.editing or not self._has_timeout():
             return
         self.time_left = self.timeout_seconds
+        self._refresh_countdown()
+
+    def _refresh_countdown(self):
         self.timer_label.setText(self._status_text())
+        if self.timeout_seconds:
+            self.ring.set_fraction(self.time_left / self.timeout_seconds)
 
     def enter_edit_mode(self):
-        """編集欄にカーソルを入れる。自分で書く以上、自動保存は止める。"""
+        """名前欄にカーソルを入れる。自分で書く以上、自動保存は止める。"""
         if self.editing:
             return
         self.editing = True
         self.timer.stop()
+        self.ring.setVisible(False)
         self.timer_label.setText(self._status_text())
         self.name_edit.setFocus()
         self.name_edit.setCursorPosition(len(self.name_edit.text()))
 
     def eventFilter(self, obj, event):
-        # 編集欄をクリックされた場合もタイマーを止める
+        # 名前欄をクリックされた場合もタイマーを止める
         if obj is self.name_edit and event.type() == QEvent.Type.FocusIn:
             self.enter_edit_mode()
         return super().eventFilter(obj, event)
@@ -421,13 +740,13 @@ class RenameDialog(QDialog):
             super().keyPressEvent(event)
 
     def confirm_edited_name(self):
-        """編集欄の内容で確定する。"""
+        """名前欄の内容で確定する。"""
         self.on_select(self.name_edit.text())
 
     def update_timer(self):
         self.time_left -= 1
         if self.time_left > 0:
-            self.timer_label.setText(self._status_text())
+            self._refresh_countdown()
         else:
             # 放置された場合は従来通り、現在選んでいる候補で自動保存する
             self.on_select(self.name_edit.text() or None)
@@ -505,15 +824,16 @@ def stop_event_loop():
 
 
 def show_rename_dialog(candidates, filepath=None, timeout_seconds=10, progress=None,
-                       foreground=False):
+                       foreground=False, dest_dir=None):
     """リネーム候補を提示する。戻り値は (確定した名前, 全体中止されたか)。
 
     timeout_seconds に None を渡すとタイムアウトしない（手動モード）。
+    dest_dir は確定後の保存先。省略すると元のフォルダを表示する。
     """
     app = _ensure_app(foreground=foreground)
     ns_app = NSApplication.sharedApplication()
 
-    dialog = RenameDialog(candidates, filepath, timeout_seconds, progress)
+    dialog = RenameDialog(candidates, filepath, timeout_seconds, progress, dest_dir)
     # Accessoryではウィンドウが自動で前面に来ないため、明示的にフォーカスを取る
     dialog.show()
     dialog.raise_()

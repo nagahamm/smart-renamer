@@ -159,6 +159,7 @@ def rename_manually(paths, config):
             timeout_seconds=None,      # 自分で決める必要があるためタイムアウトしない
             progress=(index, total),
             foreground=True,           # 自分で起動しているので前面に出す
+            dest_dir=os.path.dirname(filepath),  # 移動はせず、元のフォルダのまま
         )
 
         if aborted:
@@ -203,7 +204,9 @@ def process_screenshot(filepath, config):
         print(f"✨ 取得した候補: {candidates}")
         print("🖥️ UIを表示します...")
         # 単一のTkウィンドウとしてダイアログを起動
-        final_name, _ = show_rename_dialog(candidates, filepath, timeout_seconds=timeout)
+        final_name, _ = show_rename_dialog(
+            candidates, filepath, timeout_seconds=timeout, dest_dir=save_dir
+        )
         
     if final_name:
         apply_rename(filepath, final_name, save_dir)
