@@ -1,0 +1,8 @@
+watchdog
+google-genai
+pyyaml
+python-dotenv
+PyQt6
+pyobjc-framework-Cocoa
+pyobjc-framework-Quartz
+pyobjc-framework-Vision
