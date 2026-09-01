@@ -153,7 +153,7 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
     <array>
         <string>/usr/bin/osascript</string>
         <string>-e</string>
-        <string>do shell script "cd /path/to/smart-renamer && .venv/bin/python main.py > app.log 2> app_error.log"</string>
+        <string>do shell script "cd /path/to/smart-renamer && .venv/bin/python -u main.py > app.log 2> app_error.log"</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -182,6 +182,8 @@ PLIST_EOF
 ```
 
 ※ `WatchPaths` のパスは `config.yaml` の `watch_dir` と一致させてください（`~` は展開されないため絶対パスで記述します）。
+
+※ `python -u` は必須です。付けないと標準出力がバッファリングされ、常駐している間 `app.log` がほぼ空のままになり、障害が追えなくなります。
 
 ### 6-2. 権限設定と常駐登録
 ```bash
