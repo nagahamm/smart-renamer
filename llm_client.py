@@ -6,8 +6,10 @@ from google import genai
 from google.genai import types
 
 
-# yamlファイルを読み込む処理を追加
-with open("config.yaml", "r", encoding="utf-8") as f:
+# カレントディレクトリに依存しないよう、このファイルからの相対で解決する
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+
+with open(CONFIG_PATH, "r", encoding="utf-8") as f:
     config = yaml.safe_load(f)
 
 # yamlから設定を取得（値がない場合のデフォルト値も設定）
