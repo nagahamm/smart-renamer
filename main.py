@@ -20,6 +20,8 @@ from popup_ui import run_event_loop, show_rename_dialog, stop_event_loop
 file_queue = queue.Queue()
 processed_files = set()  # 重複処理防止用のセット
 
+DATE_FORMAT = "%Y-%m-%d"
+
 # 「撮りたて」と見なす更新時刻の上限（秒）。
 # launchdのWatchPathsで起動された直後のスキャンと、監視中のイベント判定の両方で使う。
 RECENT_FILE_MAX_AGE_SECONDS = 60
@@ -80,10 +82,15 @@ def enqueue_recent_files(handler, watch_dir):
             handler.enqueue(path)
 
 
+def today():
+    """本日の日付。ファイル名に使う書式で返す。"""
+    return datetime.now().strftime(DATE_FORMAT)
+
+
 def get_next_sequence_name(save_dir):
-    # """ LLMから候補が得られなかった場合のフォールバック（日付+連番）"""
-    today_str = datetime.now().strftime("%Y-%m-%d")
-    
+    """LLMから候補が得られなかった場合のフォールバック（日付+連番）。"""
+    today_str = today()
+
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
         
@@ -183,7 +190,7 @@ def extract_date_from_name(filepath):
     for pattern in DATE_PATTERNS:
         for year, month, day in pattern.findall(stem):
             try:
-                return datetime(int(year), int(month), int(day)).strftime("%Y-%m-%d")
+                return datetime(int(year), int(month), int(day)).strftime(DATE_FORMAT)
             except ValueError:
                 # 8桁の数字が金額や連番だった場合。次の候補を試す
                 continue
@@ -199,7 +206,7 @@ def get_file_date(filepath):
     stat = os.stat(filepath)
     # macOSでは作成日時が取れる。取れない場合のみ更新日時にフォールバックする
     timestamp = getattr(stat, "st_birthtime", stat.st_mtime)
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d")
+    return datetime.fromtimestamp(timestamp).strftime(DATE_FORMAT)
 
 
 def prefer_file_date(candidates, file_date, today):
@@ -244,9 +251,7 @@ def build_candidates(filepath, config):
     if not candidates:
         return candidates
 
-    return prefer_file_date(
-        candidates, get_file_date(filepath), datetime.now().strftime("%Y-%m-%d")
-    )
+    return prefer_file_date(candidates, get_file_date(filepath), today())
 
 
 def process_screenshot(filepath, config):
