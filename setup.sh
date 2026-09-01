@@ -141,6 +141,16 @@ cat > "$QUICK_ACTION_PATH/Contents/Info.plist" << INFO_EOF
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.user.smart-renamer.quickaction</string>
+    <key>CFBundleName</key>
+    <string>$QUICK_ACTION_NAME</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
     <key>NSServices</key>
     <array>
         <dict>
@@ -151,11 +161,6 @@ cat > "$QUICK_ACTION_PATH/Contents/Info.plist" << INFO_EOF
             </dict>
             <key>NSMessage</key>
             <string>runWorkflowAsService</string>
-            <key>NSRequiredContext</key>
-            <dict>
-                <key>NSApplicationIdentifier</key>
-                <string>com.apple.finder</string>
-            </dict>
             <key>NSSendFileTypes</key>
             <array>
                 <string>public.item</string>
@@ -228,8 +233,7 @@ cat > "$QUICK_ACTION_PATH/Contents/document.wflow" << WFLOW_EOF
                 <key>ActionParameters</key>
                 <dict>
                     <key>COMMAND_STRING</key>
-                    <string>cd "$PROJECT_DIR"
-.venv/bin/python main.py --rename "\$@"</string>
+                    <string>"$PROJECT_DIR/.venv/bin/python" "$PROJECT_DIR/main.py" --rename "\$@"</string>
                     <key>CheckedForUserDefaultShell</key>
                     <true/>
                     <key>inputMethod</key>
@@ -281,17 +285,13 @@ cat > "$QUICK_ACTION_PATH/Contents/document.wflow" << WFLOW_EOF
     <key>workflowMetaData</key>
     <dict>
         <key>serviceApplicationBundleID</key>
-        <string>com.apple.finder</string>
-        <key>serviceApplicationName</key>
-        <string>Finder</string>
+        <string></string>
         <key>serviceInputTypeIdentifier</key>
         <string>com.apple.Automator.fileSystemObject</string>
         <key>serviceOutputTypeIdentifier</key>
         <string>com.apple.Automator.nothing</string>
         <key>serviceProcessesInput</key>
         <integer>0</integer>
-        <key>presentationMode</key>
-        <integer>11</integer>
         <key>workflowTypeIdentifier</key>
         <string>com.apple.Automator.servicesMenu</string>
     </dict>
