@@ -3,6 +3,7 @@ import os
 import queue
 import re
 import shutil
+import sys
 import time
 import yaml
 from datetime import datetime
@@ -61,14 +62,12 @@ class ScreenshotHandler(FileSystemEventHandler):
         if not event.is_directory:
             self.enqueue(event.src_path)
 
-
 def is_recent(path):
     """撮りたてのファイルか（更新時刻が十分に新しいか）。"""
     try:
         return time.time() - os.path.getmtime(path) <= RECENT_FILE_MAX_AGE_SECONDS
     except OSError:
         return False
-
 
 def enqueue_recent_files(handler, watch_dir):
     """launchdのWatchPathsで起動された場合、起動のきっかけとなったスクショは
@@ -81,11 +80,64 @@ def enqueue_recent_files(handler, watch_dir):
         if os.path.isfile(path):
             handler.enqueue(path)
 
-
 def today():
     """本日の日付。ファイル名に使う書式で返す。"""
     return datetime.now().strftime(DATE_FORMAT)
 
+DATE_PATTERNS = [
+    re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)"),
+    re.compile(r"(?<!\d)(\d{4})_(\d{2})_(\d{2})(?!\d)"),
+    re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)"),
+]
+
+def extract_date_from_name(filepath):
+    """ファイル名に含まれる日付を YYYY-MM-DD で返す。見つからなければ None。"""
+    stem = os.path.splitext(os.path.basename(filepath))[0]
+    for pattern in DATE_PATTERNS:
+        for year, month, day in pattern.findall(stem):
+            try:
+                return datetime(int(year), int(month), int(day)).strftime(DATE_FORMAT)
+            except ValueError:
+                # 8桁の数字が金額や連番だった場合。次の候補を試す
+                continue
+    return None
+
+def get_file_date(filepath):
+    """対象ファイルの日付。ファイル名の日付を優先し、無ければ作成日時を使う。"""
+    from_name = extract_date_from_name(filepath)
+    if from_name:
+        return from_name
+
+    stat = os.stat(filepath)
+    # macOSでは作成日時が取れる。取れない場合のみ更新日時にフォールバックする
+    timestamp = getattr(stat, "st_birthtime", stat.st_mtime)
+    return datetime.fromtimestamp(timestamp).strftime(DATE_FORMAT)
+
+def prefer_file_date(candidates, file_date, today_date):
+    """本日の日付で生成された候補を、最後の1件を残してファイルの日付に差し替える。
+
+    OCR本文から日付を読み取れた候補は本日の日付にならないため、そのまま残る。
+    内容由来の日付の方が正しく、書き換えると壊れるため触らない。
+    本日の日付の候補を1件残すのは、撮り直しなどで今日の日付を使いたい場合のため。
+    """
+    if file_date == today_date:
+        return candidates
+
+    # YYYY-MM-DD と、学習系ルールの YYYY-MM の両方を対象にする
+    prefixes = [(today_date, file_date), (today_date[:7], file_date[:7])]
+
+    matches = []
+    for index, name in enumerate(candidates):
+        # 長い YYYY-MM-DD から先に見て、1候補につき1回だけ差し替える
+        for old, new in prefixes:
+            if name.startswith(old):
+                matches.append((index, old, new))
+                break
+
+    result = list(candidates)
+    for index, old, new in matches[:-1]:
+        result[index] = new + result[index][len(old):]
+    return result
 
 def get_next_sequence_name(save_dir):
     """LLMから候補が得られなかった場合のフォールバック（日付+連番）。"""
@@ -110,6 +162,42 @@ def get_next_sequence_name(save_dir):
     next_seq = max_seq + 1
     return f"{today_str}__{next_seq:04d}_Capture"
 
+def build_candidates(filepath, config):
+    """OCR/テキスト抽出からファイル名候補までをまとめる。監視・手動の共通処理。"""
+    print("🔍 テキストを抽出中...")
+    text = extract_text(filepath)
+
+    print("🧠 LLMへファイル名候補をリクエスト中...")
+    candidates = get_filename_candidates(
+        text,
+        config['llm_rules']['prompt_template'],
+        config['llm']['model'],
+        config['llm']['timeout_seconds'],
+    )
+    if not candidates:
+        return candidates
+
+    return prefer_file_date(candidates, get_file_date(filepath), today())
+
+def apply_rename(filepath, final_name, dest_dir):
+    """元の拡張子を保ったままリネームして dest_dir へ移す。"""
+    # 拡張子を決め打ちすると、PNG以外を渡したときに壊れたファイル名になる
+    extension = os.path.splitext(filepath)[1]
+    dest_path = os.path.join(dest_dir, f"{final_name}{extension}")
+
+    # 同名ファイルが存在する場合の重複回避 (_1, _2 ...)
+    counter = 1
+    while os.path.exists(dest_path):
+        dest_path = os.path.join(dest_dir, f"{final_name}_{counter}{extension}")
+        counter += 1
+
+    try:
+        shutil.move(filepath, dest_path)
+        print(f"✅ 保存完了: {dest_path}\n")
+        return dest_path
+    except Exception as e:
+        print(f"❌ ファイル移動エラー: {e}")
+        return None
 
 def collect_targets(paths):
     """CLIで渡されたパスを、リネーム対象のファイル一覧に展開する。
@@ -133,7 +221,6 @@ def collect_targets(paths):
                 targets.append(candidate)
 
     return targets
-
 
 def rename_manually(paths, config):
     """選ばれたファイルをその場でリネームする（移動しない）。"""
@@ -177,82 +264,6 @@ def rename_manually(paths, config):
 
 
 # ファイル名に含まれる日付。区切りの有無と種類だけが違う
-DATE_PATTERNS = [
-    re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)"),
-    re.compile(r"(?<!\d)(\d{4})_(\d{2})_(\d{2})(?!\d)"),
-    re.compile(r"(?<!\d)(\d{4})(\d{2})(\d{2})(?!\d)"),
-]
-
-
-def extract_date_from_name(filepath):
-    """ファイル名に含まれる日付を YYYY-MM-DD で返す。見つからなければ None。"""
-    stem = os.path.splitext(os.path.basename(filepath))[0]
-    for pattern in DATE_PATTERNS:
-        for year, month, day in pattern.findall(stem):
-            try:
-                return datetime(int(year), int(month), int(day)).strftime(DATE_FORMAT)
-            except ValueError:
-                # 8桁の数字が金額や連番だった場合。次の候補を試す
-                continue
-    return None
-
-
-def get_file_date(filepath):
-    """対象ファイルの日付。ファイル名の日付を優先し、無ければ作成日時を使う。"""
-    from_name = extract_date_from_name(filepath)
-    if from_name:
-        return from_name
-
-    stat = os.stat(filepath)
-    # macOSでは作成日時が取れる。取れない場合のみ更新日時にフォールバックする
-    timestamp = getattr(stat, "st_birthtime", stat.st_mtime)
-    return datetime.fromtimestamp(timestamp).strftime(DATE_FORMAT)
-
-
-def prefer_file_date(candidates, file_date, today):
-    """本日の日付で生成された候補を、最後の1件を残してファイルの日付に差し替える。
-
-    OCR本文から日付を読み取れた候補は本日の日付にならないため、そのまま残る。
-    内容由来の日付の方が正しく、書き換えると壊れるため触らない。
-    本日の日付の候補を1件残すのは、撮り直しなどで今日の日付を使いたい場合のため。
-    """
-    if file_date == today:
-        return candidates
-
-    # YYYY-MM-DD と、学習系ルールの YYYY-MM の両方を対象にする
-    prefixes = [(today, file_date), (today[:7], file_date[:7])]
-
-    matches = []
-    for index, name in enumerate(candidates):
-        # 長い YYYY-MM-DD から先に見て、1候補につき1回だけ差し替える
-        for old, new in prefixes:
-            if name.startswith(old):
-                matches.append((index, old, new))
-                break
-
-    result = list(candidates)
-    for index, old, new in matches[:-1]:
-        result[index] = new + result[index][len(old):]
-    return result
-
-
-def build_candidates(filepath, config):
-    """OCR/テキスト抽出からファイル名候補までをまとめる。監視・手動の共通処理。"""
-    print("🔍 テキストを抽出中...")
-    text = extract_text(filepath)
-
-    print("🧠 LLMへファイル名候補をリクエスト中...")
-    candidates = get_filename_candidates(
-        text,
-        config['llm_rules']['prompt_template'],
-        config['llm']['model'],
-        config['llm']['timeout_seconds'],
-    )
-    if not candidates:
-        return candidates
-
-    return prefer_file_date(candidates, get_file_date(filepath), today())
-
 
 def process_screenshot(filepath, config):
     # OSによるファイル書き込み完了を待つため1秒待機
@@ -283,63 +294,8 @@ def process_screenshot(filepath, config):
     else:
         print("⚠️ キャンセルされました。ファイルは元の場所に残ります。\n")
 
-
-def apply_rename(filepath, final_name, dest_dir):
-    """元の拡張子を保ったままリネームして dest_dir へ移す。"""
-    # 拡張子を決め打ちすると、PNG以外を渡したときに壊れたファイル名になる
-    extension = os.path.splitext(filepath)[1]
-    dest_path = os.path.join(dest_dir, f"{final_name}{extension}")
-
-    # 同名ファイルが存在する場合の重複回避 (_1, _2 ...)
-    counter = 1
-    while os.path.exists(dest_path):
-        dest_path = os.path.join(dest_dir, f"{final_name}_{counter}{extension}")
-        counter += 1
-
-    try:
-        shutil.move(filepath, dest_path)
-        print(f"✅ 保存完了: {dest_path}\n")
-        return dest_path
-    except Exception as e:
-        print(f"❌ ファイル移動エラー: {e}")
-        return None
-
-
-def load_config():
-    # 実行ディレクトリに依存せず、スクリプトと同じ場所の設定を読む
-    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
-    try:
-        with open(config_path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f)
-    except FileNotFoundError:
-        print(f"エラー: config.yaml が見つかりません。({config_path})")
-        exit(1)
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="スクリーンショットのリネームツール")
-    parser.add_argument(
-        "--rename",
-        nargs="+",
-        metavar="PATH",
-        help="指定したファイル（またはフォルダ直下のファイル）をその場でリネームする",
-    )
-    args = parser.parse_args()
-
-    config = load_config()
-
-    # キーが無いと候補が取れず、全ファイルが無言で連番になる。
-    # API障害による連番フォールバックとは違い設定ミスは直らないので、起動時に弾く
-    if not get_api_key():
-        print(f"エラー: {API_KEY_ENV} が設定されていません。")
-        print(".env に GEMINI_API_KEY=<キー> を記述してください。")
-        exit(1)
-
-    # 手動モード: 常駐せず、渡されたファイルを処理して終了する
-    if args.rename:
-        rename_manually(args.rename, config)
-        exit(0)
-
+def watch_forever(config):
+    """監視モードの本体。Qtのイベントループを回しながらキューを捌く。"""
     watch_dir = os.path.expanduser(config['directories']['watch_dir'])
     idle_timeout = config['ui'].get('idle_timeout_minutes', 0) * 60
 
@@ -384,3 +340,44 @@ if __name__ == "__main__":
     print("\n監視を終了しました。")
     observer.stop()
     observer.join()
+
+def load_config():
+    # 実行ディレクトリに依存せず、スクリプトと同じ場所の設定を読む
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.yaml")
+    try:
+        with open(config_path, "r", encoding="utf-8") as f:
+            return yaml.safe_load(f)
+    except FileNotFoundError:
+        print(f"エラー: config.yaml が見つかりません。({config_path})")
+        sys.exit(1)
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="スクリーンショットのリネームツール")
+    parser.add_argument(
+        "--rename",
+        nargs="+",
+        metavar="PATH",
+        help="指定したファイル（またはフォルダ直下のファイル）をその場でリネームする",
+    )
+    return parser.parse_args()
+
+def main():
+    args = parse_args()
+    config = load_config()
+
+    # キーが無いと候補が取れず、全ファイルが無言で連番になる。
+    # API障害による連番フォールバックとは違い設定ミスは直らないので、起動時に弾く
+    if not get_api_key():
+        print(f"エラー: {API_KEY_ENV} が設定されていません。")
+        print(".env に GEMINI_API_KEY=<キー> を記述してください。")
+        sys.exit(1)
+
+    # 手動モード: 常駐せず、渡されたファイルを処理して終了する
+    if args.rename:
+        rename_manually(args.rename, config)
+        return
+
+    watch_forever(config)
+
+if __name__ == "__main__":
+    main()
