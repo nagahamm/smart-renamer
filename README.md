@@ -199,7 +199,7 @@ cat << 'PLIST_EOF' > ~/Library/LaunchAgents/com.user.smart_renamer.plist
     <array>
         <string>/usr/bin/osascript</string>
         <string>-e</string>
-        <string>do shell script "cd /path/to/smart-renamer && .venv/bin/python -u main.py > app.log 2> app_error.log"</string>
+        <string>do shell script "cd /path/to/smart-renamer &amp;&amp; .venv/bin/python -u main.py &gt; app.log 2&gt; app_error.log"</string>
     </array>
 
     <key>RunAtLoad</key>
@@ -222,6 +222,8 @@ PLIST_EOF
 ```
 
 ※ `/path/to/smart-renamer` は実際にこのプロジェクトを置いた場所に置き換えてください。
+
+※ `&amp;&amp;` と `&gt;` はXMLのエスケープです。`&&` `>` に書き戻すとXMLとして不正になり、`launchctl` が読み込めません。作成後に `plutil -lint ~/Library/LaunchAgents/com.user.smart_renamer.plist` で確認してください。
 
 ※ `WatchPaths` のパスは `config.yaml` の `watch_dir` と一致させてください（`~` は展開されないため絶対パスで記述します）。
 
